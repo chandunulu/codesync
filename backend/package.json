@@ -1,0 +1,25 @@
+{
+  "name": "codesync-backend",
+  "version": "1.0.0",
+  "description": "Backend for CodeSync collaborative coding platform",
+  "main": "server.js",
+  "scripts": {
+    "start": "cross-env PORT=5000 node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "axios": "^1.5.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "mongoose": "^7.5.0",
+    "socket.io": "^4.7.2"
+  },
+  "devDependencies": {
+    "cross-env": "^10.0.0",
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
