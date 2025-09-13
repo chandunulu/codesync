@@ -11,7 +11,7 @@ const server = http.createServer(app);
 
 // CORS Configuration
 app.use(cors({
-  origin: "https://c0desync.netlify.app/",
+  origin:"*",
   methods: ["GET", "POST", "PUT", "DELETE"],
   credentials: true
 }));
@@ -19,7 +19,7 @@ app.use(cors({
 // Socket.IO with CORS
 const io = socketIo(server, {
   cors: {
-    origin: "https://c0desync.netlify.app/",
+    origin: "*",
     methods: ["GET", "POST"]
   }
 });
