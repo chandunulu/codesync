@@ -54,7 +54,7 @@ function LandingPage() {
     try {
       const roomId = generateRoomId();
       
-      const response = await axios.post(`${process.env.REACT_APP_API_URL || 'http://localhost:5000'}/api/rooms/create-room`, {
+      const response = await axios.post(`${process.env.REACT_APP_API_URL  }/api/rooms/create-room`, {
         roomID: roomId,
         creator: creatorName.trim(),
         name: roomName.trim() || `${creatorName.trim()}'s Room`
@@ -103,7 +103,7 @@ function LandingPage() {
 
     try {
       // Check if room exists first
-      const checkResponse = await axios.get(`${process.env.REACT_APP_API_URL || 'http://localhost:5000'}/api/rooms/check-room/${rid}`);
+      const checkResponse = await axios.get(`${process.env.REACT_APP_API_URL}/api/rooms/check-room/${rid}`);
       
       if (!checkResponse.data.success) {
         showNotification('Room not found or is inactive', 'error');
@@ -112,7 +112,7 @@ function LandingPage() {
       }
 
       // Join the room
-      const joinResponse = await axios.post(`${process.env.REACT_APP_API_URL || 'http://localhost:5000'}/api/rooms/join-room`, {
+      const joinResponse = await axios.post(`${process.env.REACT_APP_API_URL }/api/rooms/join-room`, {
         roomID: rid,
         userName: userName.trim()
       });

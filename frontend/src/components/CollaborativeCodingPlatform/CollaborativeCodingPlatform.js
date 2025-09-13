@@ -165,14 +165,6 @@ int main() {
 // Write your code here...`;
 };
 
-// Base64 decode utility
-const base64Decode = (str) => {
-  try {
-    return atob(str);
-  } catch (e) {
-    return str; // Return original if not base64
-  }
-};
 
 function CollaborativeCodingPlatform() {
   const { roomId } = useParams();
@@ -342,7 +334,7 @@ function CollaborativeCodingPlatform() {
     
     try {
       // Initialize socket connection
-      const socketUrl = process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000';
+      const socketUrl = process.env.REACT_APP_SOCKET_URL ;
       socketRef.current = io(socketUrl, {
         transports: ['websocket', 'polling']
       });
@@ -350,7 +342,7 @@ function CollaborativeCodingPlatform() {
       setupSocketListeners();
       
       // Join room via API first to validate
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+      const apiUrl = process.env.REACT_APP_API_URL ;
       const response = await axios.post(`${apiUrl}/api/rooms/join-room`, {
         roomID: roomId,
         userName: userName
@@ -393,7 +385,7 @@ function CollaborativeCodingPlatform() {
     setOutput('Running code...\n');
     
     try {
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+      const apiUrl = process.env.REACT_APP_API_URL ;
       const response = await axios.post(`${apiUrl}/api/execute`, {
         source_code: code,
         language_id: language,
