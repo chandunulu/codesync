@@ -51,9 +51,9 @@ app.use('/api/rooms', roomRoutes);
 // FIXED: Removed the first, duplicate /api/execute endpoint.
 // This is the single, improved version, placed in the correct order.
 app.post('/api/execute', async (req, res) => {
-  const { code, language_id, stdin } = req.body;
+  const { source_code, language_id, stdin } = req.body;
 
-  if (!code || !language_id) {
+  if (!source_code || !language_id) {
     return res.status(400).json({
       success: false,
       message: 'Code and language_id are required'
@@ -64,8 +64,8 @@ app.post('/api/execute', async (req, res) => {
     const submissionData = {
       language_id: parseInt(language_id),
       // Judge0 expects source_code and stdin to be base64 encoded for reliability
-      source_code: Buffer.from(code).toString('base64'),
-      stdin: stdin ? Buffer.from(stdin).toString('base64') : null,
+      source_code:code,
+      stdin: stdinl,
     };
 
     // Submit to Judge0
