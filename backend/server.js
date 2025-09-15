@@ -48,11 +48,10 @@ mongoose.connect(process.env.MONGODB_URI)
 const roomRoutes = require('./routes/rooms');
 app.use('/api/rooms', roomRoutes);
 
-// FIXED: Removed the first, duplicate /api/execute endpoint.
-// This is the single, improved version, placed in the correct order.
+// FIXED: Properly encode source_code and stdin to base64
 app.post('/api/execute', async (req, res) => {
   const { source_code, language_id, stdin } = req.body;
-
+   
   if (!source_code || !language_id) {
     return res.status(400).json({
       success: false,
@@ -61,12 +60,22 @@ app.post('/api/execute', async (req, res) => {
   }
 
   try {
+    // Ensure source_code is properly encoded as UTF-8, then base64
+    const sourceCodeBuffer = Buffer.from(source_code, 'utf8');
+    const stdinBuffer = stdin ? Buffer.from(stdin, 'utf8') : Buffer.from('', 'utf8');
+
     const submissionData = {
       language_id: parseInt(language_id),
       // Judge0 expects source_code and stdin to be base64 encoded for reliability
-      source_code:code,
-      stdin: stdinl,
+      source_code: sourceCodeBuffer.toString('base64'),
+      stdin: stdinBuffer.toString('base64'),
     };
+
+    console.log('Submitting to Judge0:', {
+      language_id: submissionData.language_id,
+      source_code_length: submissionData.source_code.length,
+      stdin_length: submissionData.stdin.length
+    });
 
     // Submit to Judge0
     const submitResponse = await axios.post('https://judge0-ce.p.rapidapi.com/submissions?base64_encoded=true&wait=false', submissionData, {
@@ -81,6 +90,8 @@ app.post('/api/execute', async (req, res) => {
     if (!token) {
       throw new Error("Failed to get submission token from Judge0");
     }
+
+    console.log('Got submission token:', token);
 
     // Poll for result
     let result;
@@ -99,6 +110,8 @@ app.post('/api/execute', async (req, res) => {
       });
 
       result = resultResponse.data;
+      console.log('Polling attempt', attempts + 1, 'Status:', result.status.description);
+      
       // Status codes: 1=In Queue, 2=Processing. Anything > 2 is a final state.
       if (result.status.id > 2) {
         break;
@@ -122,6 +135,14 @@ app.post('/api/execute', async (req, res) => {
       time: result.time,
       memory: result.memory
     };
+
+    console.log('Execution completed:', {
+      status: decodedResult.status.description,
+      hasStdout: !!decodedResult.stdout,
+      hasStderr: !!decodedResult.stderr,
+      time: decodedResult.time,
+      memory: decodedResult.memory
+    });
 
     res.json({
       success: true,
@@ -245,13 +266,34 @@ io.on('connection', (socket) => {
 });
 
 function generateUserColor(userName) {
-  // ... (unchanged)
+  // Simple hash function to generate consistent colors for users
+  let hash = 0;
+  for (let i = 0; i < userName.length; i++) {
+    hash = userName.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  
+  // Generate HSL color with good saturation and lightness
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 70%, 50%)`;
 }
 
 // Cleanup inactive rooms periodically
 setInterval(() => {
-  // ... (unchanged)
-}, 60 * 60 * 1000);
+  const now = new Date();
+  const roomsToDelete = [];
+  
+  rooms.forEach((room, roomId) => {
+    // Delete rooms older than 24 hours with no users
+    if (room.users.size === 0 && (now - room.createdAt) > 24 * 60 * 60 * 1000) {
+      roomsToDelete.push(roomId);
+    }
+  });
+  
+  roomsToDelete.forEach(roomId => {
+    rooms.delete(roomId);
+    console.log(`Cleaned up inactive room: ${roomId}`);
+  });
+}, 60 * 60 * 1000); // Run every hour
 
 
 // --- SERVER INITIALIZATION ---
