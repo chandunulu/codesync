@@ -202,7 +202,10 @@ io.on('connection', (socket) => {
     socket.emit('room-state', {
       code: room.code,
       language: room.language,
-      users: Array.from(room.users.values())
+      users: Array.from(room.users.values()).map(user => ({
+        ...user,
+        isCurrentUser: user.id === socket.id
+      }))
     });
 
     // Notify others
@@ -228,41 +231,102 @@ io.on('connection', (socket) => {
 
   socket.on('close-room', ({ roomId }) => {
     if (socket.isCreator && rooms.has(roomId)) {
-      io.to(roomId).emit('room-closed', { message: 'The host has closed the room.' });
+      io.to(roomId).emit('room-closed', { 
+        message: 'The room has been closed', 
+        closedBy: socket.userName 
+      });
       rooms.delete(roomId);
       console.log(`Room ${roomId} closed by creator ${socket.userName}`);
     }
   });
 
+  // WebRTC Voice Chat Handlers (MOVED INSIDE CONNECTION HANDLER)
+  socket.on('join-voice-chat', ({ roomId, userName }) => {
+    console.log(`${userName} joined voice chat in room ${roomId}`);
+    
+    // Notify other users in the room that this user joined voice chat
+    socket.to(roomId).emit('user-joined-voice', {
+      userId: socket.id,
+      userName: userName
+    });
+  });
+
+  socket.on('leave-voice-chat', ({ roomId, userName }) => {
+    console.log(`${userName} left voice chat in room ${roomId}`);
+    
+    // Notify other users in the room that this user left voice chat
+    socket.to(roomId).emit('user-left-voice', {
+      userId: socket.id,
+      userName: userName
+    });
+  });
+
+  // WebRTC Signaling Handlers (MOVED INSIDE CONNECTION HANDLER)
+  socket.on('webrtc-offer', ({ roomId, offer, to, fromUser }) => {
+    console.log(`WebRTC offer from ${fromUser} to ${to} in room ${roomId}`);
+    
+    // Forward the offer to the specific peer
+    socket.to(to).emit('webrtc-offer', {
+      offer: offer,
+      from: socket.id,
+      fromUser: fromUser
+    });
+  });
+
+  socket.on('webrtc-answer', ({ roomId, answer, to }) => {
+    console.log(`WebRTC answer to ${to} in room ${roomId}`);
+    
+    // Forward the answer to the specific peer
+    socket.to(to).emit('webrtc-answer', {
+      answer: answer,
+      from: socket.id
+    });
+  });
+
+  socket.on('webrtc-ice-candidate', ({ roomId, candidate, to }) => {
+    console.log(`ICE candidate to ${to} in room ${roomId}`);
+    
+    // Forward the ICE candidate to the specific peer
+    socket.to(to).emit('webrtc-ice-candidate', {
+      candidate: candidate,
+      from: socket.id
+    });
+  });
+
   // Disconnect logic to handle users leaving
   const handleDisconnect = () => {
+    console.log(`User ${socket.id} disconnected`);
+    
     if (socket.roomId && rooms.has(socket.roomId)) {
-        const room = rooms.get(socket.roomId);
-        room.users.delete(socket.id);
+      const room = rooms.get(socket.roomId);
+      room.users.delete(socket.id);
 
-        if (room.users.size === 0) {
-            rooms.delete(socket.roomId);
-            console.log(`Room ${socket.roomId} is now empty and has been deleted.`);
-        } else {
-            // If the creator leaves, you might want to assign a new one
-            // Or simply notify others
-            socket.to(socket.roomId).emit('user-left', {
-                userId: socket.id,
-                userName: socket.userName,
-                users: Array.from(room.users.values())
-            });
-        }
+      if (room.users.size === 0) {
+        rooms.delete(socket.roomId);
+        console.log(`Room ${socket.roomId} is now empty and has been deleted.`);
+      } else {
+        // Notify others that user left
+        socket.to(socket.roomId).emit('user-left', {
+          userId: socket.id,
+          userName: socket.userName,
+          users: Array.from(room.users.values())
+        });
+      }
     }
-    console.log(`User disconnected: ${socket.id}`);
+
+    // Notify voice chat participants about disconnection
+    socket.rooms.forEach(roomId => {
+      if (roomId !== socket.id) { // Skip the user's own room
+        socket.to(roomId).emit('user-left-voice', {
+          userId: socket.id,
+          userName: socket.userName || 'Unknown User'
+        });
+      }
+    });
   };
 
   socket.on('disconnect', handleDisconnect);
   socket.on('leave-room', handleDisconnect);
-
-  // WebRTC Signaling
-  socket.on('webrtc-offer', (payload) => socket.to(payload.to).emit('webrtc-offer', { offer: payload.offer, from: socket.id }));
-  socket.on('webrtc-answer', (payload) => socket.to(payload.to).emit('webrtc-answer', { answer: payload.answer, from: socket.id }));
-  socket.on('webrtc-ice-candidate', (payload) => socket.to(payload.to).emit('webrtc-ice-candidate', { candidate: payload.candidate, from: socket.id }));
 });
 
 function generateUserColor(userName) {

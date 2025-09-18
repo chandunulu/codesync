@@ -189,6 +189,7 @@ function CollaborativeCodingPlatform() {
   const [users, setUsers] = useState([]);
   const [, setCurrentUser] = useState(null);
   
+  const[remoteUser,setRemortUser]=useState(new Map());
   // Media states
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(false);
@@ -519,26 +520,31 @@ function CollaborativeCodingPlatform() {
         
         // Set up remote stream handler
         webRTCRef.current.setOnRemoteStream((peerId, peerName, stream) => {
-          const videoElement = remoteVideosRef.current[peerId];
-          if (videoElement) {
-            videoElement.srcObject = stream;
-          }
+          console.log('Received remote stream form:',peerName)
+          setRemortUser(prev=> new Map(prev.set(peerId,{
+            name:peerName,stream
+          })));
         });
         
         webRTCRef.current.setOnPeerRemoved((peerId) => {
-          const videoElement = remoteVideosRef.current[peerId];
-          if (videoElement) {
-            videoElement.srcObject = null;
-          }
-          delete remoteVideosRef.current[peerId];
+          console.log('Peer removed:',peerId)
+          setRemortUser(prev=>{
+            const updated=new Map(prev);
+            updated.delete(peerId);
+            return updated
+          })
+          
         });
+
+        
+
         
         setVoiceEnabled(true);
         setMicMuted(false);
         showAppNotification('Joined voice chat');
       } catch (error) {
         console.error('Failed to join voice chat:', error);
-        showAppNotification('Failed to access microphone', 'error');
+        showAppNotification('Failed to access microphone/camera. Please check permissions.', 'error');
       }
     } else {
       // Leave voice chat
@@ -551,13 +557,7 @@ function CollaborativeCodingPlatform() {
         localVideoRef.current.srcObject = null;
       }
       
-      Object.keys(remoteVideosRef.current).forEach(peerId => {
-        const videoElement = remoteVideosRef.current[peerId];
-        if (videoElement) {
-          videoElement.srcObject = null;
-        }
-      });
-      remoteVideosRef.current = {};
+      setRemortUser(new Map());
       
       setVoiceEnabled(false);
       setVideoEnabled(false);
@@ -568,9 +568,9 @@ function CollaborativeCodingPlatform() {
 
   const toggleMic = () => {
     if (webRTCRef.current) {
-      const newMutedState = !webRTCRef.current.toggleAudio();
-      setMicMuted(newMutedState);
-      showAppNotification(newMutedState ? 'Microphone muted' : 'Microphone unmuted');
+      const audioEnabled = webRTCRef.current.toggleAudio();
+      setMicMuted(!audioEnabled);
+      showAppNotification(audioEnabled ? 'Microphone unmuted' : 'Microphone muted');
     }
   };
 
@@ -638,6 +638,35 @@ function CollaborativeCodingPlatform() {
     cleanup();
     navigate('/');
   };
+
+
+  const RemortVideoComponent=({peerId,userData,videoEnabled})=>{
+    const videoRef=useRef(null);
+    useEffect(()=>{
+      if(videoRef.current && userData.stream){
+        videoRef.current.srcObject=userData.stream;
+      }
+      return()=>{
+        if (videoRef.current){
+          videoRef.current.srcObject=null;
+        }
+      };
+    },[userData.stream]);
+    return(
+      <div className="mb-2 relative">
+        <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        className={`w-full rounded ${videoEnabled ? 'h-20' : 'h-12'} bg-gray-700`}
+        />
+        <div className="absolute bottom-1 left-1 bg-black bg-opacity-50 text-white text-xs px-1 rounded">
+          {userData.name}
+        </div>
+      </div>
+    );
+  };
+
 
   const currentLanguage = getCurrentLanguage();
 
@@ -897,37 +926,37 @@ function CollaborativeCodingPlatform() {
           {voiceEnabled && (
             <div className="border-t border-gray-700 p-3">
               <h4 className="text-xs font-medium mb-2 text-white">
-                Video Chat
+                Video Chat ({remoteUser.size+1}participants)
               </h4>
               
               {/* Local Video */}
-              <div className="mb-2">
+              <div className="mb-2 relative">
                 <video
                   ref={localVideoRef}
                   autoPlay
                   muted
                   playsInline
-                  className="w-full h-20 bg-gray-700 rounded"
+                  className={`w-full rounded ${videoEnabled ? 'h-20' : 'h-12'} bg-gray-700`}
                 />
-                <p className="text-xs text-center mt-1 text-gray-400">You</p>
+                <div className="absolute bottom-1 left-1 bg-black bg-opacity-50 text-white text-xs px-1 rounded">
+                  You {micMuted && '🔇'}
+                </div>
               </div>
 
               {/* Remote Videos */}
-              {Object.entries(remoteVideosRef.current).map(([peerId]) => (
-                <div key={peerId} className="mb-2">
-                  <video
-                    ref={el => {
-                      if (el) remoteVideosRef.current[peerId] = el;
-                    }}
-                    autoPlay
-                    playsInline
-                    className="w-full h-20 bg-gray-700 rounded"
-                  />
-                  <p className="text-xs text-center mt-1 text-gray-400">
-                    Remote User
-                  </p>
-                </div>
+              {Array.from (remoteUser.entries()).map(([peerId,userData]) => (
+                <RemortVideoComponent 
+                key={peerId}
+                peerId={peerId}
+                userData={userData}
+                videoEnabled={videoEnabled}
+                />
               ))}
+              {remoteUser.size === 0 && (
+                <div className="text-xs text-gray-400 text-center py-2">
+                    Waiting for others to join voice chat...
+                  </div>
+              )}
             </div>
           )}
         </div>
@@ -937,3 +966,24 @@ function CollaborativeCodingPlatform() {
 }
 
 export default CollaborativeCodingPlatform;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
