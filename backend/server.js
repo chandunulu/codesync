@@ -29,7 +29,6 @@ const io = socketIo(server, {
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-
 // --- DATABASE CONNECTION ---
 
 mongoose.connect(process.env.MONGODB_URI)
@@ -41,14 +40,13 @@ mongoose.connect(process.env.MONGODB_URI)
     process.exit(1);
   });
 
-
 // --- API ROUTES ---
 
 // Import other routes
 const roomRoutes = require('./routes/rooms');
 app.use('/api/rooms', roomRoutes);
 
-// FIXED: Properly encode source_code and stdin to base64
+// Code execution endpoint
 app.post('/api/execute', async (req, res) => {
   const { source_code, language_id, stdin } = req.body;
    
@@ -159,6 +157,7 @@ app.post('/api/execute', async (req, res) => {
   }
 });
 
+// Health check endpoint
 app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
@@ -167,19 +166,19 @@ app.get('/health', (req, res) => {
   });
 });
 
-
 // --- SOCKET.IO LOGIC ---
 
 // NOTE: This is in-memory state. It will be lost on server restart.
 // For production, this should be replaced with a distributed store like Redis.
 const rooms = new Map();
 
-// FIXED: Track voice chat participants per room
+// Track voice chat participants per room
 const voiceChatParticipants = new Map(); // roomId -> Set of {socketId, userName}
 
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
 
+  // Room management events
   socket.on('join-room', ({ roomId, userName }) => {
     socket.join(roomId);
     socket.userName = userName;
@@ -216,6 +215,8 @@ io.on('connection', (socket) => {
       user: { id: socket.id, name: userName, color: userColor, isCreator },
       users: Array.from(room.users.values())
     });
+
+    console.log(`${userName} joined room ${roomId}`);
   });
 
   socket.on('code-change', ({ roomId, code }) => {
@@ -239,13 +240,19 @@ io.on('connection', (socket) => {
         closedBy: socket.userName 
       });
       rooms.delete(roomId);
+      
+      // Clean up voice chat participants for this room
+      if (voiceChatParticipants.has(roomId)) {
+        voiceChatParticipants.delete(roomId);
+      }
+      
       console.log(`Room ${roomId} closed by creator ${socket.userName}`);
     }
   });
 
-  // FIXED: Enhanced voice chat join handler
+  // Voice chat events
   socket.on('join-voice-chat', ({ roomId, userName }) => {
-    console.log(`${userName} joined voice chat in room ${roomId}`);
+    console.log(`${userName} (${socket.id}) joined voice chat in room ${roomId}`);
     
     // Initialize room voice participants if not exists
     if (!voiceChatParticipants.has(roomId)) {
@@ -258,6 +265,8 @@ io.on('connection', (socket) => {
     const existingParticipants = Array.from(roomParticipants)
       .filter(p => p.socketId !== socket.id)
       .map(p => ({ userId: p.socketId, userName: p.userName }));
+    
+    console.log(`Sending ${existingParticipants.length} existing participants to ${userName}`);
     
     // Send existing participants to the new user
     socket.emit('voice-chat-participants', {
@@ -273,19 +282,22 @@ io.on('connection', (socket) => {
       userName: userName
     });
     
-    console.log(`Voice chat participants in ${roomId}:`, roomParticipants.size);
+    console.log(`Voice chat participants in ${roomId}:`, Array.from(roomParticipants).map(p => p.userName));
   });
 
   socket.on('leave-voice-chat', ({ roomId, userName }) => {
-    console.log(`${userName} left voice chat in room ${roomId}`);
+    console.log(`${userName} (${socket.id}) left voice chat in room ${roomId}`);
     
     if (voiceChatParticipants.has(roomId)) {
       const roomParticipants = voiceChatParticipants.get(roomId);
-      roomParticipants.forEach(p => {
-        if (p.socketId === socket.id) {
-          roomParticipants.delete(p);
+      
+      // Remove the user from participants
+      for (const participant of roomParticipants) {
+        if (participant.socketId === socket.id) {
+          roomParticipants.delete(participant);
+          break;
         }
-      });
+      }
       
       // Clean up empty rooms
       if (roomParticipants.size === 0) {
@@ -302,117 +314,70 @@ io.on('connection', (socket) => {
 
   // WebRTC Signaling Handlers
   socket.on('webrtc-offer', ({ roomId, offer, to, fromUser }) => {
-    console.log(`WebRTC offer from ${fromUser} to ${to} in room ${roomId}`);
+    console.log(`WebRTC offer from ${fromUser} (${socket.id}) to ${to} in room ${roomId}`);
     
-    // Forward the offer to the specific peer
-    socket.to(to).emit('webrtc-offer', {
-      offer: offer,
-      from: socket.id,
-      fromUser: fromUser
-    });
+    // Validate that the target socket is in the same room
+    const targetSocket = io.sockets.sockets.get(to);
+    if (targetSocket && targetSocket.rooms.has(roomId)) {
+      // Forward the offer to the specific peer
+      socket.to(to).emit('webrtc-offer', {
+        offer: offer,
+        from: socket.id,
+        fromUser: fromUser
+      });
+      console.log(`Offer forwarded successfully to ${to}`);
+    } else {
+      console.error(`Target socket ${to} not found or not in room ${roomId}`);
+      // Optionally notify the sender that the target is not available
+      socket.emit('webrtc-error', {
+        type: 'target-not-found',
+        message: `Target user ${to} is not available`,
+        targetId: to
+      });
+    }
   });
 
   socket.on('webrtc-answer', ({ roomId, answer, to }) => {
-    console.log(`WebRTC answer to ${to} in room ${roomId}`);
+    console.log(`WebRTC answer from ${socket.id} to ${to} in room ${roomId}`);
     
-    // Forward the answer to the specific peer
-    socket.to(to).emit('webrtc-answer', {
-      answer: answer,
-      from: socket.id
-    });
+    // Validate that the target socket is in the same room
+    const targetSocket = io.sockets.sockets.get(to);
+    if (targetSocket && targetSocket.rooms.has(roomId)) {
+      // Forward the answer to the specific peer
+      socket.to(to).emit('webrtc-answer', {
+        answer: answer,
+        from: socket.id
+      });
+      console.log(`Answer forwarded successfully to ${to}`);
+    } else {
+      console.error(`Target socket ${to} not found or not in room ${roomId}`);
+      socket.emit('webrtc-error', {
+        type: 'target-not-found',
+        message: `Target user ${to} is not available`,
+        targetId: to
+      });
+    }
   });
 
   socket.on('webrtc-ice-candidate', ({ roomId, candidate, to }) => {
-    console.log(`ICE candidate to ${to} in room ${roomId}`);
+    console.log(`ICE candidate from ${socket.id} to ${to} in room ${roomId}`);
     
-    // Forward the ICE candidate to the specific peer
-    socket.to(to).emit('webrtc-ice-candidate', {
-      candidate: candidate,
-      from: socket.id
-    });
-  });
-
-  // FIXED: Enhanced disconnect handler
-  const handleDisconnect = () => {
-    console.log(`User ${socket.id} disconnected`);
-    
-    if (socket.roomId && rooms.has(socket.roomId)) {
-      const room = rooms.get(socket.roomId);
-      room.users.delete(socket.id);
-
-      if (room.users.size === 0) {
-        rooms.delete(socket.roomId);
-        console.log(`Room ${socket.roomId} is now empty and has been deleted.`);
-      } else {
-        // Notify others that user left
-        socket.to(socket.roomId).emit('user-left', {
-          userId: socket.id,
-          userName: socket.userName,
-          users: Array.from(room.users.values())
-        });
-      }
-    }
-
-    // FIXED: Clean up voice chat participants
-    voiceChatParticipants.forEach((participants, roomId) => {
-      participants.forEach(p => {
-        if (p.socketId === socket.id) {
-          participants.delete(p);
-          // Notify voice chat participants about disconnection
-          socket.to(roomId).emit('user-left-voice', {
-            userId: socket.id,
-            userName: socket.userName || 'Unknown User'
-          });
-        }
+    // Validate that the target socket is in the same room
+    const targetSocket = io.sockets.sockets.get(to);
+    if (targetSocket && targetSocket.rooms.has(roomId)) {
+      // Forward the ICE candidate to the specific peer
+      socket.to(to).emit('webrtc-ice-candidate', {
+        candidate: candidate,
+        from: socket.id
       });
-      
-      // Clean up empty rooms
-      if (participants.size === 0) {
-        voiceChatParticipants.delete(roomId);
-      }
-    });
-  };
-
-  socket.on('disconnect', handleDisconnect);
-  socket.on('leave-room', handleDisconnect);
-});
-
-function generateUserColor(userName) {
-  // Simple hash function to generate consistent colors for users
-  let hash = 0;
-  for (let i = 0; i < userName.length; i++) {
-    hash = userName.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  
-  // Generate HSL color with good saturation and lightness
-  const hue = Math.abs(hash) % 360;
-  return `hsl(${hue}, 70%, 50%)`;
-}
-
-// Cleanup inactive rooms periodically
-setInterval(() => {
-  const now = new Date();
-  const roomsToDelete = [];
-  
-  rooms.forEach((room, roomId) => {
-    // Delete rooms older than 24 hours with no users
-    if (room.users.size === 0 && (now - room.createdAt) > 24 * 60 * 60 * 1000) {
-      roomsToDelete.push(roomId);
+      console.log(`ICE candidate forwarded successfully to ${to}`);
+    } else {
+      console.error(`Target socket ${to} not found or not in room ${roomId}`);
+      // ICE candidates can fail silently as they're sent frequently
     }
   });
-  
-  roomsToDelete.forEach(roomId => {
-    rooms.delete(roomId);
-    console.log(`Cleaned up inactive room: ${roomId}`);
-  });
-}, 60 * 60 * 1000); // Run every hour
 
-
-// In your socket connection handler (usually in server.js or similar)
-io.on('connection', (socket) => {
-  // ... your existing handlers ...
-
-  // Whiteboard drawing event
+  // Whiteboard events
   socket.on('whiteboard-draw', (data) => {
     const { roomId, x, y, prevX, prevY, color, size } = data;
     
@@ -427,7 +392,6 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Whiteboard clear event
   socket.on('whiteboard-clear', (data) => {
     const { roomId } = data;
     
@@ -435,7 +399,195 @@ io.on('connection', (socket) => {
     socket.to(roomId).emit('whiteboard-clear');
   });
 
-  // ... rest of your existing handlers ...
+  // Chat events (if you have chat functionality)
+  socket.on('chat-message', ({ roomId, message, userName }) => {
+    const messageData = {
+      id: Date.now(),
+      message,
+      userName,
+      timestamp: new Date().toISOString(),
+      userId: socket.id
+    };
+    
+    // Broadcast message to all users in the room (including sender for confirmation)
+    io.to(roomId).emit('chat-message', messageData);
+    console.log(`Chat message in room ${roomId} from ${userName}: ${message}`);
+  });
+
+  // Cursor sharing events (if you have cursor sharing)
+  socket.on('cursor-move', ({ roomId, x, y, userName }) => {
+    socket.to(roomId).emit('cursor-move', {
+      x,
+      y,
+      userName,
+      userId: socket.id
+    });
+  });
+
+  // File sharing events (if you have file sharing)
+  socket.on('file-share', ({ roomId, fileName, fileData, fileType, userName }) => {
+    const fileShareData = {
+      id: Date.now(),
+      fileName,
+      fileData,
+      fileType,
+      userName,
+      userId: socket.id,
+      timestamp: new Date().toISOString()
+    };
+    
+    socket.to(roomId).emit('file-shared', fileShareData);
+    console.log(`File shared in room ${roomId} by ${userName}: ${fileName}`);
+  });
+
+  // Enhanced disconnect handler
+  const handleDisconnect = (reason) => {
+    console.log(`User ${socket.id} (${socket.userName}) disconnected. Reason: ${reason || 'unknown'}`);
+    
+    // Handle regular room cleanup
+    if (socket.roomId && rooms.has(socket.roomId)) {
+      const room = rooms.get(socket.roomId);
+      room.users.delete(socket.id);
+
+      if (room.users.size === 0) {
+        rooms.delete(socket.roomId);
+        console.log(`Room ${socket.roomId} is now empty and has been deleted.`);
+      } else {
+        // Check if disconnected user was the creator, promote someone else
+        const wasCreator = socket.isCreator;
+        if (wasCreator) {
+          // Promote the first remaining user to creator
+          const remainingUsers = Array.from(room.users.values());
+          if (remainingUsers.length > 0) {
+            remainingUsers[0].isCreator = true;
+            console.log(`Promoted ${remainingUsers[0].name} to room creator`);
+          }
+        }
+
+        // Notify others that user left
+        socket.to(socket.roomId).emit('user-left', {
+          userId: socket.id,
+          userName: socket.userName,
+          users: Array.from(room.users.values())
+        });
+      }
+    }
+
+    // Clean up voice chat participants
+    voiceChatParticipants.forEach((participants, roomId) => {
+      const participantToRemove = Array.from(participants).find(p => p.socketId === socket.id);
+      if (participantToRemove) {
+        participants.delete(participantToRemove);
+        
+        // Notify voice chat participants about disconnection
+        socket.to(roomId).emit('user-left-voice', {
+          userId: socket.id,
+          userName: socket.userName || 'Unknown User'
+        });
+        
+        console.log(`Removed ${socket.userName} from voice chat in room ${roomId}`);
+      }
+      
+      // Clean up empty voice chat rooms
+      if (participants.size === 0) {
+        voiceChatParticipants.delete(roomId);
+        console.log(`Cleaned up empty voice chat room: ${roomId}`);
+      }
+    });
+  };
+
+  socket.on('disconnect', handleDisconnect);
+  socket.on('leave-room', () => handleDisconnect('leave-room'));
+
+  // Handle connection errors
+  socket.on('error', (error) => {
+    console.error(`Socket error for ${socket.id}:`, error);
+  });
+});
+
+// Utility functions
+function generateUserColor(userName) {
+  // Simple hash function to generate consistent colors for users
+  let hash = 0;
+  for (let i = 0; i < userName.length; i++) {
+    hash = userName.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  
+  // Generate HSL color with good saturation and lightness
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 70%, 50%)`;
+}
+
+// Periodic cleanup tasks
+setInterval(() => {
+  const now = new Date();
+  const roomsToDelete = [];
+  
+  rooms.forEach((room, roomId) => {
+    // Delete rooms older than 24 hours with no users
+    if (room.users.size === 0 && (now - room.createdAt) > 24 * 60 * 60 * 1000) {
+      roomsToDelete.push(roomId);
+    }
+  });
+  
+  roomsToDelete.forEach(roomId => {
+    rooms.delete(roomId);
+    // Also clean up any orphaned voice chat participants
+    if (voiceChatParticipants.has(roomId)) {
+      voiceChatParticipants.delete(roomId);
+    }
+    console.log(`Cleaned up inactive room: ${roomId}`);
+  });
+  
+  // Log current stats
+  console.log(`Active rooms: ${rooms.size}, Voice chat rooms: ${voiceChatParticipants.size}`);
+}, 60 * 60 * 1000); // Run every hour
+
+// Log server statistics every 5 minutes
+setInterval(() => {
+  const connectedSockets = io.sockets.sockets.size;
+  const activeRooms = rooms.size;
+  const voiceChatRooms = voiceChatParticipants.size;
+  
+  console.log(`📊 Server Stats - Connected: ${connectedSockets}, Rooms: ${activeRooms}, Voice Chats: ${voiceChatRooms}`);
+}, 5 * 60 * 1000);
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('🛑 SIGTERM received, shutting down gracefully');
+  
+  // Notify all connected clients about server shutdown
+  io.emit('server-shutdown', {
+    message: 'Server is shutting down for maintenance',
+    timestamp: new Date().toISOString()
+  });
+  
+  // Close all connections
+  io.close(() => {
+    console.log('👋 All connections closed');
+    
+    // Close database connection
+    mongoose.connection.close(() => {
+      console.log('📦 Database connection closed');
+      process.exit(0);
+    });
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('🛑 SIGINT received, shutting down gracefully');
+  process.exit(0);
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('💥 Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
 });
 
 // --- SERVER INITIALIZATION ---
@@ -443,5 +595,8 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`💾 Database: ${mongoose.connection.readyState === 1 ? 'Connected' : 'Connecting...'}`);
+  console.log(`🔧 CORS enabled for all origins (configure for production)`);
 });

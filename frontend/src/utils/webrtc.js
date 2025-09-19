@@ -38,6 +38,9 @@ class WebRTCManager {
       iceCandidatePoolSize: 10
     };
     
+    // Store pending ICE candidates
+    this.pendingIceCandidates = new Map();
+    
     // Setup socket listeners for WebRTC signaling
     this.setupSignalingListeners();
     
@@ -45,23 +48,31 @@ class WebRTCManager {
   }
 
   setupSignalingListeners() {
-      this.socket.on('voice-chat-participants', ({ participants }) => {
+    // Clean up existing listeners first
+    this.cleanupSignalingListeners();
+    
+    // Listen for existing voice chat participants
+    this.socket.on('voice-chat-participants', async ({ participants }) => {
       console.log('Received existing voice chat participants:', participants);
-  
-      participants.forEach(({ userId, userName }) => {
-      if (userId !== this.socket.id) {
-         console.log('Creating connection to existing participant:', userName);
-         this.createPeerConnection(userId, userName, true); // true = we initiate
-          }
-        });
-      });
-    // Listen for new users joining voice chat
-    this.socket.on('user-joined-voice', ({ userId, userName }) => {
-      console.log('User joined voice chat:', userName);
-      this.createPeerConnection(userId, userName, true); // true = initiator
+      
+      // Add a small delay to ensure local stream is ready
+      await this.waitForLocalStream();
+      
+      for (const { userId, userName } of participants) {
+        if (userId !== this.socket.id) {
+          console.log('Creating connection to existing participant:', userName);
+          await this.createPeerConnection(userId, userName, true); // true = we initiate
+        }
+      }
     });
     
-
+    // Listen for new users joining voice chat
+    this.socket.on('user-joined-voice', async ({ userId, userName }) => {
+      console.log('User joined voice chat:', userName);
+      await this.waitForLocalStream();
+      await this.createPeerConnection(userId, userName, true); // true = initiator
+    });
+    
     // Listen for users leaving voice chat
     this.socket.on('user-left-voice', ({ userId, userName }) => {
       console.log('User left voice chat:', userName);
@@ -85,6 +96,30 @@ class WebRTCManager {
       console.log('Received ICE candidate from:', from);
       await this.handleIceCandidate(candidate, from);
     });
+  }
+
+  cleanupSignalingListeners() {
+    this.socket.off('voice-chat-participants');
+    this.socket.off('user-joined-voice');
+    this.socket.off('user-left-voice');
+    this.socket.off('webrtc-offer');
+    this.socket.off('webrtc-answer');
+    this.socket.off('webrtc-ice-candidate');
+  }
+
+  // Wait for local stream to be available
+  async waitForLocalStream(maxAttempts = 50) {
+    let attempts = 0;
+    while (!this.localStream && attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      attempts++;
+    }
+    
+    if (!this.localStream) {
+      console.warn('Local stream not available after waiting');
+    }
+    
+    return this.localStream;
   }
 
   async initializeMedia(videoEnabled = false, audioEnabled = true) {
@@ -115,6 +150,8 @@ class WebRTCManager {
       }
 
       console.log('Local media initialized successfully');
+      console.log('Audio tracks:', this.localStream.getAudioTracks().length);
+      console.log('Video tracks:', this.localStream.getVideoTracks().length);
       
       // Notify server that user joined voice chat
       this.socket.emit('join-voice-chat', {
@@ -140,18 +177,32 @@ class WebRTCManager {
     const peerConnection = new RTCPeerConnection(this.iceConfiguration);
     this.peerConnections.set(peerId, { connection: peerConnection, name: peerName });
 
-    // Add local stream to peer connection
+    // Initialize pending ICE candidates for this peer
+    this.pendingIceCandidates.set(peerId, []);
+
+    // Add local stream tracks to peer connection
     if (this.localStream) {
+      console.log('Adding local tracks to peer connection for:', peerName);
       this.localStream.getTracks().forEach(track => {
+        console.log('Adding track:', track.kind, 'enabled:', track.enabled);
         peerConnection.addTrack(track, this.localStream);
       });
+    } else {
+      console.warn('No local stream available when creating peer connection for:', peerName);
     }
 
     // Handle remote stream
     peerConnection.ontrack = (event) => {
       console.log('Received remote stream from:', peerName);
+      console.log('Remote stream tracks:', event.streams[0].getTracks().length);
+      
       const [remoteStream] = event.streams;
       this.remoteStreams.set(peerId, remoteStream);
+      
+      // Log track details
+      remoteStream.getTracks().forEach(track => {
+        console.log('Remote track:', track.kind, 'enabled:', track.enabled, 'muted:', track.muted);
+      });
       
       if (this.onRemoteStreamCallback) {
         this.onRemoteStreamCallback(peerId, peerName, remoteStream);
@@ -195,14 +246,21 @@ class WebRTCManager {
       }
     };
 
+    // Add ICE gathering state change handler
+    peerConnection.onicegatheringstatechange = () => {
+      console.log(`ICE gathering state with ${peerName}:`, peerConnection.iceGatheringState);
+    };
+
     // If initiator, create and send offer
     if (isInitiator) {
       try {
+        console.log('Creating offer for:', peerName);
         const offer = await peerConnection.createOffer({
           offerToReceiveAudio: true,
           offerToReceiveVideo: true
         });
         
+        console.log('Setting local description for:', peerName);
         await peerConnection.setLocalDescription(offer);
         
         console.log('Sending offer to:', peerName);
@@ -213,7 +271,7 @@ class WebRTCManager {
           fromUser: this.userName
         });
       } catch (error) {
-        console.error('Error creating offer:', error);
+        console.error('Error creating offer for', peerName, ':', error);
       }
     }
   }
@@ -222,6 +280,9 @@ class WebRTCManager {
     try {
       console.log('Handling offer from:', fromUser);
       
+      // Ensure we have local stream before handling offer
+      await this.waitForLocalStream();
+      
       // Create peer connection if it doesn't exist
       if (!this.peerConnections.has(from)) {
         await this.createPeerConnection(from, fromUser, false);
@@ -229,9 +290,16 @@ class WebRTCManager {
 
       const peerConnection = this.peerConnections.get(from).connection;
       
+      console.log('Setting remote description for:', fromUser);
       await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
       
+      // Process any pending ICE candidates
+      await this.processPendingIceCandidates(from);
+      
+      console.log('Creating answer for:', fromUser);
       const answer = await peerConnection.createAnswer();
+      
+      console.log('Setting local description for answer to:', fromUser);
       await peerConnection.setLocalDescription(answer);
       
       console.log('Sending answer to:', fromUser);
@@ -241,7 +309,7 @@ class WebRTCManager {
         to: from
       });
     } catch (error) {
-      console.error('Error handling offer:', error);
+      console.error('Error handling offer from', fromUser, ':', error);
     }
   }
 
@@ -249,14 +317,19 @@ class WebRTCManager {
     try {
       const peerData = this.peerConnections.get(from);
       if (!peerData) {
-        console.error('No peer connection found for:', from);
+        console.error('No peer connection found for answer from:', from);
         return;
       }
 
+      console.log('Setting remote description for answer from:', from);
       await peerData.connection.setRemoteDescription(new RTCSessionDescription(answer));
+      
+      // Process any pending ICE candidates
+      await this.processPendingIceCandidates(from);
+      
       console.log('Answer processed successfully for:', from);
     } catch (error) {
-      console.error('Error handling answer:', error);
+      console.error('Error handling answer from', from, ':', error);
     }
   }
 
@@ -268,11 +341,43 @@ class WebRTCManager {
         return;
       }
 
-      await peerData.connection.addIceCandidate(new RTCIceCandidate(candidate));
+      const peerConnection = peerData.connection;
+      
+      // If remote description is not set, queue the candidate
+      if (!peerConnection.remoteDescription) {
+        console.log('Queueing ICE candidate for:', from);
+        this.pendingIceCandidates.get(from).push(candidate);
+        return;
+      }
+
+      console.log('Adding ICE candidate from:', from);
+      await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
       console.log('ICE candidate added successfully for:', from);
     } catch (error) {
-      console.error('Error handling ICE candidate:', error);
+      console.error('Error handling ICE candidate from', from, ':', error);
     }
+  }
+
+  async processPendingIceCandidates(peerId) {
+    const pendingCandidates = this.pendingIceCandidates.get(peerId) || [];
+    const peerConnection = this.peerConnections.get(peerId)?.connection;
+    
+    if (!peerConnection || pendingCandidates.length === 0) {
+      return;
+    }
+    
+    console.log('Processing', pendingCandidates.length, 'pending ICE candidates for:', peerId);
+    
+    for (const candidate of pendingCandidates) {
+      try {
+        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (error) {
+        console.error('Error adding pending ICE candidate:', error);
+      }
+    }
+    
+    // Clear pending candidates
+    this.pendingIceCandidates.set(peerId, []);
   }
 
   removePeerConnection(peerId) {
@@ -286,6 +391,10 @@ class WebRTCManager {
 
     if (this.remoteStreams.has(peerId)) {
       this.remoteStreams.delete(peerId);
+    }
+
+    if (this.pendingIceCandidates.has(peerId)) {
+      this.pendingIceCandidates.delete(peerId);
     }
 
     if (this.onPeerRemovedCallback) {
@@ -335,17 +444,26 @@ class WebRTCManager {
           this.localStream.addTrack(newVideoTrack);
           
           // Add the new track to all existing peer connections
-          this.peerConnections.forEach(({ connection }) => {
-            const sender = connection.getSenders().find(s => 
-              s.track && s.track.kind === 'video'
-            );
-            
-            if (sender) {
-              sender.replaceTrack(newVideoTrack);
-            } else {
+          for (const [peerId, { connection }] of this.peerConnections) {
+            try {
               connection.addTrack(newVideoTrack, this.localStream);
+              
+              // Create new offer since we added a track
+              if (connection.signalingState === 'stable') {
+                const offer = await connection.createOffer();
+                await connection.setLocalDescription(offer);
+                
+                this.socket.emit('webrtc-offer', {
+                  roomId: this.roomId,
+                  offer: offer,
+                  to: peerId,
+                  fromUser: this.userName
+                });
+              }
+            } catch (error) {
+              console.error('Error adding video track to peer connection:', error);
             }
-          });
+          }
 
           this.videoEnabled = true;
           console.log('Video enabled');
@@ -451,6 +569,7 @@ class WebRTCManager {
     });
     this.peerConnections.clear();
     this.remoteStreams.clear();
+    this.pendingIceCandidates.clear();
 
     // Stop local media tracks
     if (this.localStream) {
@@ -461,11 +580,7 @@ class WebRTCManager {
     }
 
     // Remove socket listeners
-    this.socket.off('user-joined-voice');
-    this.socket.off('user-left-voice');
-    this.socket.off('webrtc-offer');
-    this.socket.off('webrtc-answer');
-    this.socket.off('webrtc-ice-candidate');
+    this.cleanupSignalingListeners();
 
     this.audioEnabled = false;
     this.videoEnabled = false;
