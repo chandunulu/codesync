@@ -189,7 +189,7 @@ function CollaborativeCodingPlatform() {
   const [users, setUsers] = useState([]);
   const [, setCurrentUser] = useState(null);
   
-  const[remoteUser,setRemortUser]=useState(new Map());
+  const[remoteUsers,setRemoteUsers]=useState(new Map());
   // Media states
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(false);
@@ -521,19 +521,22 @@ function CollaborativeCodingPlatform() {
         // Set up remote stream handler
         webRTCRef.current.setOnRemoteStream((peerId, peerName, stream) => {
           console.log('Received remote stream form:',peerName)
-          setRemortUser(prev=> new Map(prev.set(peerId,{
-            name:peerName,stream
-          })));
+          setRemoteUsers(prev =>
+          {
+            const updated=new Map(prev);
+            updated.set(peerId,{name:peerName,stream});
+            return updated;
+          }
+          )
         });
         
         webRTCRef.current.setOnPeerRemoved((peerId) => {
-          console.log('Peer removed:',peerId)
-          setRemortUser(prev=>{
-            const updated=new Map(prev);
-            updated.delete(peerId);
-            return updated
-          })
-          
+          console.log('Peer removed:', peerId);
+          setRemoteUsers(prev => {
+          const updated = new Map(prev);
+          updated.delete(peerId);
+          return updated;
+          });
         });
 
         
@@ -557,7 +560,7 @@ function CollaborativeCodingPlatform() {
         localVideoRef.current.srcObject = null;
       }
       
-      setRemortUser(new Map());
+      setRemoteUsers(new Map());
       
       setVoiceEnabled(false);
       setVideoEnabled(false);
@@ -926,7 +929,7 @@ function CollaborativeCodingPlatform() {
           {voiceEnabled && (
             <div className="border-t border-gray-700 p-3">
               <h4 className="text-xs font-medium mb-2 text-white">
-                Video Chat ({remoteUser.size+1}participants)
+                Video Chat ({remoteUsers.size+1}participants)
               </h4>
               
               {/* Local Video */}
@@ -944,7 +947,7 @@ function CollaborativeCodingPlatform() {
               </div>
 
               {/* Remote Videos */}
-              {Array.from (remoteUser.entries()).map(([peerId,userData]) => (
+              {Array.from (remoteUsers.entries()).map(([peerId,userData]) => (
                 <RemortVideoComponent 
                 key={peerId}
                 peerId={peerId}
@@ -952,7 +955,7 @@ function CollaborativeCodingPlatform() {
                 videoEnabled={videoEnabled}
                 />
               ))}
-              {remoteUser.size === 0 && (
+              {remoteUsers.size === 0 && (
                 <div className="text-xs text-gray-400 text-center py-2">
                     Waiting for others to join voice chat...
                   </div>
@@ -966,24 +969,3 @@ function CollaborativeCodingPlatform() {
 }
 
 export default CollaborativeCodingPlatform;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

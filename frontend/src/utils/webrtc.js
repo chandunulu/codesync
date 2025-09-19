@@ -45,11 +45,22 @@ class WebRTCManager {
   }
 
   setupSignalingListeners() {
+      this.socket.on('voice-chat-participants', ({ participants }) => {
+      console.log('Received existing voice chat participants:', participants);
+  
+      participants.forEach(({ userId, userName }) => {
+      if (userId !== this.socket.id) {
+         console.log('Creating connection to existing participant:', userName);
+         this.createPeerConnection(userId, userName, true); // true = we initiate
+          }
+        });
+      });
     // Listen for new users joining voice chat
     this.socket.on('user-joined-voice', ({ userId, userName }) => {
       console.log('User joined voice chat:', userName);
       this.createPeerConnection(userId, userName, true); // true = initiator
     });
+    
 
     // Listen for users leaving voice chat
     this.socket.on('user-left-voice', ({ userId, userName }) => {

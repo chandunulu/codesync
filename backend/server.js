@@ -174,6 +174,9 @@ app.get('/health', (req, res) => {
 // For production, this should be replaced with a distributed store like Redis.
 const rooms = new Map();
 
+// FIXED: Track voice chat participants per room
+const voiceChatParticipants = new Map(); // roomId -> Set of {socketId, userName}
+
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
 
@@ -240,19 +243,55 @@ io.on('connection', (socket) => {
     }
   });
 
-  // WebRTC Voice Chat Handlers (MOVED INSIDE CONNECTION HANDLER)
+  // FIXED: Enhanced voice chat join handler
   socket.on('join-voice-chat', ({ roomId, userName }) => {
     console.log(`${userName} joined voice chat in room ${roomId}`);
+    
+    // Initialize room voice participants if not exists
+    if (!voiceChatParticipants.has(roomId)) {
+      voiceChatParticipants.set(roomId, new Set());
+    }
+    
+    const roomParticipants = voiceChatParticipants.get(roomId);
+    
+    // Get existing participants (exclude the joining user)
+    const existingParticipants = Array.from(roomParticipants)
+      .filter(p => p.socketId !== socket.id)
+      .map(p => ({ userId: p.socketId, userName: p.userName }));
+    
+    // Send existing participants to the new user
+    socket.emit('voice-chat-participants', {
+      participants: existingParticipants
+    });
+    
+    // Add new user to participants
+    roomParticipants.add({ socketId: socket.id, userName: userName });
     
     // Notify other users in the room that this user joined voice chat
     socket.to(roomId).emit('user-joined-voice', {
       userId: socket.id,
       userName: userName
     });
+    
+    console.log(`Voice chat participants in ${roomId}:`, roomParticipants.size);
   });
 
   socket.on('leave-voice-chat', ({ roomId, userName }) => {
     console.log(`${userName} left voice chat in room ${roomId}`);
+    
+    if (voiceChatParticipants.has(roomId)) {
+      const roomParticipants = voiceChatParticipants.get(roomId);
+      roomParticipants.forEach(p => {
+        if (p.socketId === socket.id) {
+          roomParticipants.delete(p);
+        }
+      });
+      
+      // Clean up empty rooms
+      if (roomParticipants.size === 0) {
+        voiceChatParticipants.delete(roomId);
+      }
+    }
     
     // Notify other users in the room that this user left voice chat
     socket.to(roomId).emit('user-left-voice', {
@@ -261,7 +300,7 @@ io.on('connection', (socket) => {
     });
   });
 
-  // WebRTC Signaling Handlers (MOVED INSIDE CONNECTION HANDLER)
+  // WebRTC Signaling Handlers
   socket.on('webrtc-offer', ({ roomId, offer, to, fromUser }) => {
     console.log(`WebRTC offer from ${fromUser} to ${to} in room ${roomId}`);
     
@@ -293,7 +332,7 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Disconnect logic to handle users leaving
+  // FIXED: Enhanced disconnect handler
   const handleDisconnect = () => {
     console.log(`User ${socket.id} disconnected`);
     
@@ -314,13 +353,22 @@ io.on('connection', (socket) => {
       }
     }
 
-    // Notify voice chat participants about disconnection
-    socket.rooms.forEach(roomId => {
-      if (roomId !== socket.id) { // Skip the user's own room
-        socket.to(roomId).emit('user-left-voice', {
-          userId: socket.id,
-          userName: socket.userName || 'Unknown User'
-        });
+    // FIXED: Clean up voice chat participants
+    voiceChatParticipants.forEach((participants, roomId) => {
+      participants.forEach(p => {
+        if (p.socketId === socket.id) {
+          participants.delete(p);
+          // Notify voice chat participants about disconnection
+          socket.to(roomId).emit('user-left-voice', {
+            userId: socket.id,
+            userName: socket.userName || 'Unknown User'
+          });
+        }
+      });
+      
+      // Clean up empty rooms
+      if (participants.size === 0) {
+        voiceChatParticipants.delete(roomId);
       }
     });
   };
