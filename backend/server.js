@@ -408,6 +408,36 @@ setInterval(() => {
 }, 60 * 60 * 1000); // Run every hour
 
 
+// In your socket connection handler (usually in server.js or similar)
+io.on('connection', (socket) => {
+  // ... your existing handlers ...
+
+  // Whiteboard drawing event
+  socket.on('whiteboard-draw', (data) => {
+    const { roomId, x, y, prevX, prevY, color, size } = data;
+    
+    // Broadcast the drawing data to all other users in the room
+    socket.to(roomId).emit('whiteboard-draw', {
+      x,
+      y,
+      prevX,
+      prevY,
+      color,
+      size
+    });
+  });
+
+  // Whiteboard clear event
+  socket.on('whiteboard-clear', (data) => {
+    const { roomId } = data;
+    
+    // Broadcast the clear command to all other users in the room
+    socket.to(roomId).emit('whiteboard-clear');
+  });
+
+  // ... rest of your existing handlers ...
+});
+
 // --- SERVER INITIALIZATION ---
 
 const PORT = process.env.PORT || 5000;

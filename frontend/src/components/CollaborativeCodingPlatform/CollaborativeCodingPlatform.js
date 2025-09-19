@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
@@ -28,6 +29,12 @@ const VideoOffIcon = ({ size }) => <Icon size={size}><path d="M16 16.11V16a2 2 0
 const CopyIcon = ({ size }) => <Icon size={size}><rect width="14" height="14" x="8" y="8" rx="2" ry="2" /><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></Icon>;
 const SettingsIcon = ({ size }) => <Icon size={size}><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 0 2l-.15.08a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l-.22-.38a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1 0-2l.15.08a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" /><circle cx="12" cy="12" r="3" /></Icon>;
 const DownloadIcon = ({ size }) => <Icon size={size}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" x2="12" y1="15" y2="3" /></Icon>;
+const XIcon = ({ size }) => <Icon size={size}><path d="m18 6-12 12" /><path d="m6 6 12 12" /></Icon>;
+const PlusIcon = ({ size }) => <Icon size={size}><path d="M5 12h14" /><path d="M12 5v14" /></Icon>;
+const PenToolIcon = ({ size }) => <Icon size={size}><path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><path d="M2 2l7.586 7.586" /><circle cx="11" cy="11" r="2" /></Icon>;
+const HistoryIcon = ({ size }) => <Icon size={size}><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l4 2" /></Icon>;
+const PaletteIcon = ({ size }) => <Icon size={size}><circle cx="13.5" cy="6.5" r=".5" /><circle cx="17.5" cy="10.5" r=".5" /><circle cx="8.5" cy="7.5" r=".5" /><circle cx="6.5" cy="12.5" r=".5" /><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" /></Icon>;
+const TrashIcon = ({ size }) => <Icon size={size}><path d="M3 6h18" /><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" /><path d="M8 6V4c0-1 1-2 2-2h4c-1 0 2 1 2 2v2" /></Icon>;
 
 // Enhanced language configurations with Monaco language mapping
 const LANGUAGES = [
@@ -165,6 +172,299 @@ int main() {
 // Write your code here...`;
 };
 
+// Whiteboard Component
+const Whiteboard = ({ isOpen, onClose, roomId, socketRef, theme }) => {
+  const canvasRef = useRef(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [currentColor, setCurrentColor] = useState('#ffffff');
+  const [currentSize, setCurrentSize] = useState(2);
+  
+  useEffect(() => {
+    if (!isOpen || !socketRef.current) return;
+    
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    
+    // Set canvas size
+    canvas.width = 800;
+    canvas.height = 600;
+    
+    // Set background
+    ctx.fillStyle = theme === 'dark' ? '#1f2937' : '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Socket listeners for collaborative drawing
+    socketRef.current.on('whiteboard-draw', ({ x, y, prevX, prevY, color, size }) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = size;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(prevX, prevY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    });
+    
+    socketRef.current.on('whiteboard-clear', () => {
+      ctx.fillStyle = theme === 'dark' ? '#1f2937' : '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    });
+    
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.off('whiteboard-draw');
+        socketRef.current.off('whiteboard-clear');
+      }
+    };
+  }, [isOpen, theme, socketRef]);
+  
+  const startDrawing = (e) => {
+    setIsDrawing(true);
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    const ctx = canvasRef.current.getContext('2d');
+    ctx.strokeStyle = currentColor;
+    ctx.lineWidth = currentSize;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  };
+  
+  const draw = (e) => {
+    if (!isDrawing) return;
+    
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    const ctx = canvasRef.current.getContext('2d');
+    const prevX = ctx.currentX || x;
+    const prevY = ctx.currentY || y;
+    
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    
+    // Emit drawing data to other users
+    if (socketRef.current) {
+      socketRef.current.emit('whiteboard-draw', {
+        roomId,
+        x,
+        y,
+        prevX,
+        prevY,
+        color: currentColor,
+        size: currentSize
+      });
+    }
+    
+    ctx.currentX = x;
+    ctx.currentY = y;
+  };
+  
+  const stopDrawing = () => {
+    setIsDrawing(false);
+  };
+  
+  const clearCanvas = () => {
+    const ctx = canvasRef.current.getContext('2d');
+    ctx.fillStyle = theme === 'dark' ? '#1f2937' : '#ffffff';
+    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    
+    if (socketRef.current) {
+      socketRef.current.emit('whiteboard-clear', { roomId });
+    }
+  };
+  
+  if (!isOpen) return null;
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className={`${theme === 'dark' ? 'bg-gray-800' : 'bg-white'} rounded-lg p-4 max-w-4xl w-full mx-4`}>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className={`text-lg font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+            Collaborative Whiteboard
+          </h3>
+          <button
+            onClick={onClose}
+            className={`p-2 rounded hover:${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-200'} transition-colors`}
+          >
+            <XIcon size={20} />
+          </button>
+        </div>
+        
+        <div className="flex gap-4 mb-4">
+          <div className="flex items-center gap-2">
+            <label className={`text-sm ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>Color:</label>
+            <input
+              type="color"
+              value={currentColor}
+              onChange={(e) => setCurrentColor(e.target.value)}
+              className="w-8 h-8 rounded border"
+            />
+          </div>
+          
+          <div className="flex items-center gap-2">
+            <label className={`text-sm ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>Size:</label>
+            <input
+              type="range"
+              min="1"
+              max="20"
+              value={currentSize}
+              onChange={(e) => setCurrentSize(parseInt(e.target.value))}
+              className="w-20"
+            />
+            <span className={`text-sm ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>{currentSize}px</span>
+          </div>
+          
+          <button
+            onClick={clearCanvas}
+            className={`px-3 py-1 rounded ${theme === 'dark' ? 'bg-red-600 hover:bg-red-700' : 'bg-red-500 hover:bg-red-600'} text-white transition-colors`}
+          >
+            Clear
+          </button>
+          <button
+            onClick={onClose}
+            className={`px-3 py-1 rounded ${theme === 'dark' ? 'bg-gray-600 hover:bg-gray-700' : 'bg-gray-500 hover:bg-gray-600'} text-white transition-colors`}
+          >
+            Close
+          </button>
+        </div>
+        
+        
+        <canvas
+          ref={canvasRef}
+          onMouseDown={startDrawing}
+          onMouseMove={draw}
+          onMouseUp={stopDrawing}
+          onMouseLeave={stopDrawing}
+          className="border border-gray-300 cursor-crosshair"
+          style={{ maxWidth: '100%', height: 'auto' }}
+        />
+      </div>
+    </div>
+  );
+};
+
+// Code History Component
+const CodeHistory = ({ isOpen, onClose, codeHistory, onReplayChange, theme }) => {
+  const [currentStep, setCurrentStep] = useState(0);
+  const [isReplaying, setIsReplaying] = useState(false);
+  const [replaySpeed, setReplaySpeed] = useState(1000);
+  
+  const startReplay = () => {
+    if (codeHistory.length === 0) return;
+    
+    setIsReplaying(true);
+    setCurrentStep(0);
+    
+    const replay = () => {
+      let step = 0;
+      const interval = setInterval(() => {
+        if (step >= codeHistory.length) {
+          setIsReplaying(false);
+          clearInterval(interval);
+          return;
+        }
+        
+        setCurrentStep(step);
+        onReplayChange(codeHistory[step].code);
+        step++;
+      }, replaySpeed);
+    };
+    
+    replay();
+  };
+  
+  const stopReplay = () => {
+    setIsReplaying(false);
+  };
+  
+  if (!isOpen) return null;
+  
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className={`${theme === 'dark' ? 'bg-gray-800' : 'bg-white'} rounded-lg p-4 max-w-4xl w-full mx-4 max-h-[80vh] flex flex-col`}>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className={`text-lg font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+            Code History ({codeHistory.length} changes)
+          </h3>
+          <button
+            onClick={onClose}
+            className={`p-2 rounded hover:${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-200'} transition-colors`}
+          >
+            <XIcon size={20} />
+          </button>
+        </div>
+        
+        <div className="flex gap-4 mb-4">
+          <button
+            onClick={isReplaying ? stopReplay : startReplay}
+            disabled={codeHistory.length === 0}
+            className={`px-4 py-2 rounded flex items-center gap-2 ${
+              codeHistory.length === 0 
+                ? 'bg-gray-500 cursor-not-allowed' 
+                : isReplaying 
+                  ? 'bg-red-600 hover:bg-red-700' 
+                  : 'bg-green-600 hover:bg-green-700'
+            } text-white transition-colors`}
+          >
+            <PlayIcon size={16} />
+            {isReplaying ? 'Stop Replay' : 'Start Replay'}
+          </button>
+          
+          <div className="flex items-center gap-2">
+            <label className={`text-sm ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>Speed:</label>
+            <select
+              value={replaySpeed}
+              onChange={(e) => setReplaySpeed(parseInt(e.target.value))}
+              className={`px-2 py-1 rounded ${theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-900'}`}
+            >
+              <option value={500}>2x Fast</option>
+              <option value={1000}>Normal</option>
+              <option value={2000}>0.5x Slow</option>
+            </select>
+          </div>
+          
+          {isReplaying && (
+            <div className={`text-sm ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'} flex items-center`}>
+              Step: {currentStep + 1} / {codeHistory.length}
+            </div>
+          )}
+        </div>
+        
+        <div className="flex-1 overflow-auto">
+          <div className="space-y-2">
+            {codeHistory.map((entry, index) => (
+              <div
+                key={index}
+                className={`p-3 rounded border-l-4 ${
+                  index === currentStep && isReplaying
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                    : theme === 'dark'
+                      ? 'border-gray-600 bg-gray-700'
+                      : 'border-gray-300 bg-gray-50'
+                }`}
+              >
+                <div className="flex justify-between items-center mb-2">
+                  <span className={`text-sm font-medium ${theme === 'dark' ? 'text-gray-200' : 'text-gray-800'}`}>
+                    Change #{index + 1}
+                  </span>
+                  <span className={`text-xs ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+                    {entry.timestamp.toLocaleTimeString()}
+                  </span>
+                </div>
+                <div className={`text-sm ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
+                  By: {entry.user} | Length: {entry.code.length} chars
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 function CollaborativeCodingPlatform() {
   const { roomId } = useParams();
@@ -183,13 +483,14 @@ function CollaborativeCodingPlatform() {
   // State management
   const [isConnected, setIsConnected] = useState(false);
   const [code, setCode] = useState('');
+  const [input, setInput] = useState('');
   const [output, setOutput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [language, setLanguage] = useState(63); // JavaScript by default
   const [users, setUsers] = useState([]);
-  const [, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [remoteUsers, setRemoteUsers] = useState(new Map());
   
-  const[remoteUsers,setRemoteUsers]=useState(new Map());
   // Media states
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(false);
@@ -198,7 +499,14 @@ function CollaborativeCodingPlatform() {
   // UI states
   const [showSettings, setShowSettings] = useState(false);
   const [fontSize, setFontSize] = useState(14);
+  const [theme, setTheme] = useState('dark'); // 'dark' or 'light'
   const [notification, setNotification] = useState({ show: false, message: '' });
+  
+  // New feature states
+  const [showWhiteboard, setShowWhiteboard] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [codeHistory, setCodeHistory] = useState([]);
+  const [showUserManagement, setShowUserManagement] = useState(false);
   
   // Editor states
   const [isEditorReady, setIsEditorReady] = useState(false);
@@ -254,7 +562,7 @@ function CollaborativeCodingPlatform() {
       setIsConnected(false);
     });
 
-    socket.on('room-state', ({ code: roomCode, language: roomLanguage, users: roomUsers }) => {
+    socket.on('room-state', ({ code: roomCode, language: roomLanguage, users: roomUsers, input: roomInput }) => {
       console.log('Received room state:', { codeLength: roomCode?.length, language: roomLanguage, userCount: roomUsers?.length });
       if (roomCode !== undefined) {
         setCode(roomCode);
@@ -264,6 +572,7 @@ function CollaborativeCodingPlatform() {
         }
       }
       if (roomLanguage !== undefined) setLanguage(roomLanguage);
+      if (roomInput !== undefined) setInput(roomInput);
       if (roomUsers) {
         setUsers(roomUsers);
         const currentUserData = roomUsers.find(u => u.isCurrentUser);
@@ -289,6 +598,14 @@ function CollaborativeCodingPlatform() {
       showAppNotification(`${leftUserName} left the room`);
     });
 
+    socket.on('user-removed', ({ userName: removedUserName, users: updatedUsers }) => {
+      console.log('User removed:', removedUserName);
+      if (updatedUsers) {
+        setUsers(updatedUsers);
+      }
+      showAppNotification(`${removedUserName} was removed from the room`, 'error');
+    });
+
     socket.on('code-update', ({ code: newCode }) => {
       console.log('Received code update');
       setCode(newCode);
@@ -296,6 +613,11 @@ function CollaborativeCodingPlatform() {
       if (editorRef.current && isEditorReady && !editorRef.current.hasTextFocus()) {
         editorRef.current.setValue(newCode);
       }
+    });
+
+    socket.on('input-update', ({ input: newInput }) => {
+      console.log('Received input update');
+      setInput(newInput);
     });
 
     socket.on('language-update', ({ language: newLanguage }) => {
@@ -335,7 +657,7 @@ function CollaborativeCodingPlatform() {
     
     try {
       // Initialize socket connection
-      const socketUrl = process.env.REACT_APP_SOCKET_URL ;
+      const socketUrl = process.env.REACT_APP_SOCKET_URL || 'http://localhost:5000';
       socketRef.current = io(socketUrl, {
         transports: ['websocket', 'polling']
       });
@@ -343,7 +665,7 @@ function CollaborativeCodingPlatform() {
       setupSocketListeners();
       
       // Join room via API first to validate
-      const apiUrl = process.env.REACT_APP_API_URL ;
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
       const response = await axios.post(`${apiUrl}/api/rooms/join-room`, {
         roomID: roomId,
         userName: userName
@@ -386,12 +708,12 @@ function CollaborativeCodingPlatform() {
     setOutput('Running code...\n');
     
     try {
-      const apiUrl = process.env.REACT_APP_API_URL ;
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:5000';
       const response = await axios.post(`${apiUrl}/api/execute`, {
         source_code: code,
         language_id: language,
-        stdin: "",
-        base64_encoded: false,  // Enable base64 encoding
+        stdin: input,
+        base64_encoded: false,
         wait: true,
         cpu_time_limit: 5,
         memory_limit: 128000
@@ -402,13 +724,13 @@ function CollaborativeCodingPlatform() {
         let output = '';
         
         if (result.stdout) {
-          output +='OUTPUT:\n'+result.stdout+'\n';
+          output += 'OUTPUT:\n' + result.stdout + '\n';
         }
         if (result.stderr) {
           output += 'STDERR:\n' + result.stderr + '\n';
         }
         if (result.compile_output) {
-          output += 'COMPILE OUTPUT:\n' +result.compile_output+ '\n';
+          output += 'COMPILE OUTPUT:\n' + result.compile_output + '\n';
         }
         if (result.message) {
           output += 'MESSAGE:\n' + result.message + '\n';
@@ -424,7 +746,7 @@ function CollaborativeCodingPlatform() {
           }
         }
         
-        if (!output.trim())  output = 'Code executed successfully (no output)';
+        if (!output.trim()) output = 'Code executed successfully (no output)';
         
         setOutput(output);
       } else {
@@ -440,8 +762,17 @@ function CollaborativeCodingPlatform() {
 
   const handleEditorChange = (value) => {
     if (value !== undefined) {
-      console.log(code)
       setCode(value);
+      
+      // Add to history
+      setCodeHistory(prev => [
+        ...prev,
+        {
+          code: value,
+          timestamp: new Date(),
+          user: userName
+        }
+      ]);
       
       // Debounce code changes to avoid excessive socket emissions
       if (codeChangeTimeoutRef.current) {
@@ -456,6 +787,18 @@ function CollaborativeCodingPlatform() {
           });
         }
       }, 300); // 300ms debounce
+    }
+  };
+
+  const handleInputChange = (value) => {
+    setInput(value);
+    
+    // Emit input change to other users
+    if (socketRef.current && hasJoinedRef.current) {
+      socketRef.current.emit('input-change', {
+        roomId: roomId,
+        input: value
+      });
     }
   };
 
@@ -520,27 +863,22 @@ function CollaborativeCodingPlatform() {
         
         // Set up remote stream handler
         webRTCRef.current.setOnRemoteStream((peerId, peerName, stream) => {
-          console.log('Received remote stream form:',peerName)
-          setRemoteUsers(prev =>
-          {
-            const updated=new Map(prev);
-            updated.set(peerId,{name:peerName,stream});
+          console.log('Received remote stream from:', peerName);
+          setRemoteUsers(prev => {
+            const updated = new Map(prev);
+            updated.set(peerId, { name: peerName, stream });
             return updated;
-          }
-          )
+          });
         });
         
         webRTCRef.current.setOnPeerRemoved((peerId) => {
           console.log('Peer removed:', peerId);
           setRemoteUsers(prev => {
-          const updated = new Map(prev);
-          updated.delete(peerId);
-          return updated;
+            const updated = new Map(prev);
+            updated.delete(peerId);
+            return updated;
           });
         });
-
-        
-
         
         setVoiceEnabled(true);
         setMicMuted(false);
@@ -623,6 +961,25 @@ function CollaborativeCodingPlatform() {
     showAppNotification('File saved successfully!');
   };
 
+  // Remove user (creator only)
+  const removeUser = (userToRemove) => {
+    if (!currentUser?.isCreator) return;
+    
+    if (socketRef.current) {
+      socketRef.current.emit('remove-user', {
+        roomId: roomId,
+        userName: userToRemove
+      });
+    }
+  };
+
+  // Toggle theme
+  const toggleTheme = () => {
+    const newTheme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(newTheme);
+    showAppNotification(`Switched to ${newTheme} theme`);
+  };
+
   // Get current language info
   const getCurrentLanguage = () => {
     return LANGUAGES.find(lang => lang.id === language);
@@ -642,26 +999,27 @@ function CollaborativeCodingPlatform() {
     navigate('/');
   };
 
-
-  const RemortVideoComponent=({peerId,userData,videoEnabled})=>{
-    const videoRef=useRef(null);
-    useEffect(()=>{
-      if(videoRef.current && userData.stream){
-        videoRef.current.srcObject=userData.stream;
+  const RemoteVideoComponent = ({ peerId, userData, videoEnabled }) => {
+    const videoRef = useRef(null);
+    
+    useEffect(() => {
+      if (videoRef.current && userData.stream) {
+        videoRef.current.srcObject = userData.stream;
       }
-      return()=>{
-        if (videoRef.current){
-          videoRef.current.srcObject=null;
+      return () => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = null;
         }
       };
-    },[userData.stream]);
-    return(
+    }, [userData.stream]);
+    
+    return (
       <div className="mb-2 relative">
         <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        className={`w-full rounded ${videoEnabled ? 'h-20' : 'h-12'} bg-gray-700`}
+          ref={videoRef}
+          autoPlay
+          playsInline
+          className={`w-full rounded ${videoEnabled ? 'h-20' : 'h-12'} ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-300'}`}
         />
         <div className="absolute bottom-1 left-1 bg-black bg-opacity-50 text-white text-xs px-1 rounded">
           {userData.name}
@@ -670,11 +1028,55 @@ function CollaborativeCodingPlatform() {
     );
   };
 
+  // User Management Component
+  const UserManagement = ({ isOpen, onClose }) => {
+    if (!isOpen || !currentUser?.isCreator) return null;
+    
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className={`${theme === 'dark' ? 'bg-gray-800' : 'bg-white'} rounded-lg p-4 max-w-md w-full mx-4`}>
+          <div className="flex justify-between items-center mb-4">
+            <h3 className={`text-lg font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+              Manage Users
+            </h3>
+            
+          </div>
+          
+          <div className="space-y-2">
+            {users.map((user, index) => (
+              <div
+                key={index}
+                className={`flex items-center justify-between p-2 rounded ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-100'}`}
+              >
+                <div>
+                  <span className={`${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                    {user.name}
+                  </span>
+                  {user.isCreator && <span className="text-yellow-500 ml-1">👑</span>}
+                  {user.isCurrentUser && <span className={`text-blue-500 ml-1 text-sm ${theme === 'dark' ? 'text-blue-400' : 'text-blue-600'}`}>(You)</span>}
+                </div>
+                
+                {!user.isCreator && !user.isCurrentUser && (
+                  <button
+                    onClick={() => removeUser(user.name)}
+                    className="p-1 rounded bg-red-600 text-white hover:bg-red-700 transition-colors"
+                    title={`Remove ${user.name}`}
+                  >
+                    <TrashIcon size={16} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const currentLanguage = getCurrentLanguage();
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
+    <div className={`min-h-screen ${theme === 'dark' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-900'}`}>
       {/* Notification */}
       {notification.show && (
         <div className={`fixed top-4 right-4 z-50 p-4 rounded-lg shadow-lg ${
@@ -687,19 +1089,19 @@ function CollaborativeCodingPlatform() {
       )}
 
       {/* Header */}
-      <div className="bg-gray-800 border-b border-gray-700 px-6 py-3">
+      <div className={`${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border-b px-6 py-3`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <h1 className="text-lg font-semibold text-white">
+            <h1 className={`text-lg font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
               CodeSync
             </h1>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-300">
+              <span className={`text-sm ${theme === 'dark' ? 'text-gray-300' : 'text-gray-600'}`}>
                 Room: {roomId}
               </span>
               <button
                 onClick={copyRoomId}
-                className="p-1.5 rounded hover:bg-gray-700 transition-colors text-gray-300"
+                className={`p-1.5 rounded hover:${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-200'} transition-colors ${theme === 'dark' ? 'text-gray-300' : 'text-gray-600'}`}
                 title="Copy Room ID"
               >
                 <CopyIcon size={14} />
@@ -719,12 +1121,29 @@ function CollaborativeCodingPlatform() {
 
           <div className="flex items-center gap-3">
             {/* Users */}
-            <div className="flex items-center gap-2 text-gray-300">
+            <div className={`flex items-center gap-2 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-600'}`}>
               <UsersIcon size={16} />
               <span className="text-sm">
                 {users.length}
               </span>
             </div>
+
+            {/* New Feature Buttons */}
+            <button
+              onClick={() => setShowWhiteboard(true)}
+              className={`p-2 rounded transition-colors ${theme === 'dark' ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
+              title="Open Whiteboard"
+            >
+              <PenToolIcon size={16} />
+            </button>
+            
+            <button
+              onClick={() => setShowHistory(true)}
+              className={`p-2 rounded transition-colors ${theme === 'dark' ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
+              title="View Code History"
+            >
+              <HistoryIcon size={16} />
+            </button>
 
             {/* Voice/Video Controls */}
             <div className="flex items-center gap-1">
@@ -732,7 +1151,7 @@ function CollaborativeCodingPlatform() {
                 onClick={toggleVoiceChat}
                 className={`p-2 rounded transition-colors ${voiceEnabled 
                   ? 'bg-green-500 text-white hover:bg-green-600' 
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  : `${theme === 'dark' ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`
                 }`}
                 title={voiceEnabled ? 'Leave Voice Chat' : 'Join Voice Chat'}
               >
@@ -756,7 +1175,7 @@ function CollaborativeCodingPlatform() {
                     onClick={toggleVideo}
                     className={`p-2 rounded transition-colors ${videoEnabled 
                       ? 'bg-green-500 text-white hover:bg-green-600' 
-                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                      : `${theme === 'dark' ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`
                     }`}
                     title={videoEnabled ? 'Disable Camera' : 'Enable Camera'}
                   >
@@ -769,7 +1188,7 @@ function CollaborativeCodingPlatform() {
             {/* Settings */}
             <button
               onClick={() => setShowSettings(!showSettings)}
-              className="p-2 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
+              className={`p-2 rounded transition-colors ${theme === 'dark' ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
               title="Settings"
             >
               <SettingsIcon size={16} />
@@ -794,7 +1213,7 @@ function CollaborativeCodingPlatform() {
                 className={`px-2 py-0.5 rounded-full text-xs ${
                   user.isCurrentUser 
                     ? 'bg-blue-500/20 text-blue-400' 
-                    : 'bg-gray-700 text-gray-300'
+                    : `${theme === 'dark' ? 'bg-gray-700 text-gray-300' : 'bg-gray-200 text-gray-700'}`
                 }`}
               >
                 {user.name} {user.isCreator && '👑'} {user.isCurrentUser && '(You)'}
@@ -806,10 +1225,10 @@ function CollaborativeCodingPlatform() {
 
       {/* Settings Panel */}
       {showSettings && (
-        <div className="bg-gray-800 border-b border-gray-700 px-6 py-3">
-          <div className="flex items-center gap-6">
+        <div className={`${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border-b px-6 py-3`}>
+          <div className="flex items-center gap-6 flex-wrap">
             <div className="flex items-center gap-2">
-              <label className="text-xs font-medium text-gray-300">
+              <label className={`text-xs font-medium ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
                 Font Size:
               </label>
               <input
@@ -820,10 +1239,28 @@ function CollaborativeCodingPlatform() {
                 onChange={(e) => updateFontSize(parseInt(e.target.value))}
                 className="w-16"
               />
-              <span className="text-xs text-gray-300">
+              <span className={`text-xs ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
                 {fontSize}px
               </span>
             </div>
+            
+            <button
+              onClick={toggleTheme}
+              className={`flex items-center gap-2 px-3 py-1 rounded transition-colors ${theme === 'dark' ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+            >
+              <PaletteIcon size={14} />
+              {theme === 'dark' ? 'Light Theme' : 'Dark Theme'}
+            </button>
+
+            {currentUser?.isCreator && (
+              <button
+                onClick={() => setShowUserManagement(true)}
+                className={`flex items-center gap-2 px-3 py-1 rounded transition-colors ${theme === 'dark' ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-blue-500 text-white hover:bg-blue-600'}`}
+              >
+                <UsersIcon size={14} />
+                Manage Users
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -833,12 +1270,12 @@ function CollaborativeCodingPlatform() {
         {/* Editor Section */}
         <div className="flex-1 flex flex-col">
           {/* Toolbar */}
-          <div className="bg-gray-800 border-b border-gray-700 px-4 py-2 flex items-center justify-between">
+          <div className={`${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border-b px-4 py-2 flex items-center justify-between`}>
             <div className="flex items-center gap-3">
               <select
                 value={language}
                 onChange={handleLanguageChange}
-                className="px-3 py-1 rounded bg-gray-700 border-gray-600 text-white text-sm"
+                className={`px-3 py-1 rounded border text-sm ${theme === 'dark' ? 'bg-gray-700 border-gray-600 text-white' : 'bg-white border-gray-300 text-gray-900'}`}
               >
                 {LANGUAGES.map(lang => (
                   <option key={lang.id} value={lang.id}>
@@ -851,7 +1288,7 @@ function CollaborativeCodingPlatform() {
             <div className="flex items-center gap-2">
               <button
                 onClick={saveFile}
-                className="px-3 py-1.5 rounded flex items-center gap-2 bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors text-sm"
+                className={`px-3 py-1.5 rounded flex items-center gap-2 transition-colors text-sm ${theme === 'dark' ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
                 title="Save File (Ctrl+S)"
               >
                 <DownloadIcon size={14} />
@@ -863,7 +1300,7 @@ function CollaborativeCodingPlatform() {
                 disabled={isRunning || !code.trim()}
                 className={`px-4 py-1.5 rounded flex items-center gap-2 text-sm ${
                   isRunning || !code.trim()
-                    ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                    ? `${theme === 'dark' ? 'bg-gray-600 text-gray-400' : 'bg-gray-300 text-gray-500'} cursor-not-allowed`
                     : 'bg-green-600 text-white hover:bg-green-700'
                 } transition-colors`}
                 title="Run Code (Ctrl+Enter)"
@@ -875,11 +1312,11 @@ function CollaborativeCodingPlatform() {
           </div>
 
           {/* Monaco Editor */}
-          <div className="flex-1 bg-gray-900">
+          <div className={`flex-1 ${theme === 'dark' ? 'bg-gray-900' : 'bg-white'}`}>
             <Editor
               height="100%"
               language={currentLanguage?.monaco || 'plaintext'}
-              theme="vs-dark"
+              theme={theme === 'dark' ? 'vs-dark' : 'light'}
               value={code}
               onChange={handleEditorChange}
               onMount={handleEditorDidMount}
@@ -904,66 +1341,116 @@ function CollaborativeCodingPlatform() {
                 roundedSelection: false,
                 readOnly: false,
                 cursorStyle: 'line',
-                // eslint-disable-next-line no-dupe-keys
-                automaticLayout: true,
               }}
             />
           </div>
         </div>
 
-        {/* Output Section */}
-        <div className="w-80 bg-gray-800 border-l border-gray-700 flex flex-col">
-          <div className="px-4 py-2 border-b border-gray-700 bg-gray-800">
-            <h3 className="text-sm font-medium text-white">
-              Output
-            </h3>
-          </div>
-          
-          <div className="flex-1 p-4 overflow-auto">
-            <pre className="text-xs font-mono text-gray-300 whitespace-pre-wrap h-full">
-              {output || 'Click "Run Code" to see the output here...'}
-            </pre>
+        {/* Input/Output Section */}
+        <div className={`w-80 ${theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border-l flex flex-col`}>
+          {/* Input Section */}
+          <div className={`${theme === 'dark' ? 'border-gray-700' : 'border-gray-200'} border-b`}>
+            <div className={`px-4 py-2 ${theme === 'dark' ? 'bg-gray-800' : 'bg-gray-50'}`}>
+              <h3 className={`text-sm font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                Input
+              </h3>
+            </div>
+            
+            <div className="p-4">
+              <textarea
+                value={input}
+                onChange={(e) => handleInputChange(e.target.value)}
+                className={`w-full h-24 p-2 rounded border text-sm font-mono resize-none ${
+                  theme === 'dark' 
+                    ? 'bg-gray-900 border-gray-600 text-gray-300 placeholder-gray-500' 
+                    : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
+                }`}
+                placeholder="Enter input for your program here..."
+              />
+            </div>
           </div>
 
-          {/* Video Chat Area */}
-          {voiceEnabled && (
-            <div className="border-t border-gray-700 p-3">
-              <h4 className="text-xs font-medium mb-2 text-white">
-                Video Chat ({remoteUsers.size+1}participants)
-              </h4>
-              
-              {/* Local Video */}
-              <div className="mb-2 relative">
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  className={`w-full rounded ${videoEnabled ? 'h-20' : 'h-12'} bg-gray-700`}
-                />
-                <div className="absolute bottom-1 left-1 bg-black bg-opacity-50 text-white text-xs px-1 rounded">
-                  You {micMuted && '🔇'}
+          {/* Output Section */}
+          <div className="flex-1 flex flex-col">
+            <div className={`px-4 py-2 ${theme === 'dark' ? 'border-gray-700 bg-gray-800' : 'border-gray-200 bg-gray-50'} border-b`}>
+              <h3 className={`text-sm font-medium ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                Output
+              </h3>
+            </div>
+            
+            <div className="flex-1 p-4 overflow-auto">
+              <pre className={`text-xs font-mono whitespace-pre-wrap h-full ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
+                {output || 'Click "Run Code" to see the output here...'}
+              </pre>
+            </div>
+
+            {/* Video Chat Area */}
+            {voiceEnabled && (
+              <div className={`${theme === 'dark' ? 'border-gray-700' : 'border-gray-200'} border-t p-3`}>
+                <h4 className={`text-xs font-medium mb-2 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                  Video Chat ({remoteUsers.size + 1} participants)
+                </h4>
+                
+                {/* Local Video */}
+                <div className="mb-2 relative">
+                  <video
+                    ref={localVideoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className={`w-full rounded ${videoEnabled ? 'h-20' : 'h-12'} ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-300'}`}
+                  />
+                  <div className="absolute bottom-1 left-1 bg-black bg-opacity-50 text-white text-xs px-1 rounded">
+                    You {micMuted && '🔇'}
+                  </div>
                 </div>
-              </div>
 
-              {/* Remote Videos */}
-              {Array.from (remoteUsers.entries()).map(([peerId,userData]) => (
-                <RemortVideoComponent 
-                key={peerId}
-                peerId={peerId}
-                userData={userData}
-                videoEnabled={videoEnabled}
-                />
-              ))}
-              {remoteUsers.size === 0 && (
-                <div className="text-xs text-gray-400 text-center py-2">
+                {/* Remote Videos */}
+                {Array.from(remoteUsers.entries()).map(([peerId, userData]) => (
+                  <RemoteVideoComponent 
+                    key={peerId}
+                    peerId={peerId}
+                    userData={userData}
+                    videoEnabled={videoEnabled}
+                  />
+                ))}
+                {remoteUsers.size === 0 && (
+                  <div className={`text-xs text-center py-2 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
                     Waiting for others to join voice chat...
                   </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Modal Components */}
+      <Whiteboard 
+        isOpen={showWhiteboard}
+        onClose={() => setShowWhiteboard(false)}
+        roomId={roomId}
+        socketRef={socketRef}
+        theme={theme}
+      />
+
+      <CodeHistory 
+        isOpen={showHistory}
+        onClose={() => setShowHistory(false)}
+        codeHistory={codeHistory}
+        onReplayChange={(newCode) => {
+          setCode(newCode);
+          if (editorRef.current && isEditorReady) {
+            editorRef.current.setValue(newCode);
+          }
+        }}
+        theme={theme}
+      />
+
+      <UserManagement 
+        isOpen={showUserManagement}
+        onClose={() => setShowUserManagement(false)}
+      />
     </div>
   );
 }
