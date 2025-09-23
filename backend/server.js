@@ -233,6 +233,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Updated close-room handler with proper creator check
   socket.on('close-room', ({ roomId }) => {
     if (socket.isCreator && rooms.has(roomId)) {
       io.to(roomId).emit('room-closed', { 
@@ -247,6 +248,69 @@ io.on('connection', (socket) => {
       }
       
       console.log(`Room ${roomId} closed by creator ${socket.userName}`);
+    }
+  });
+
+  // NEW: Remove user event handler (creator only)
+  socket.on('remove-user', ({ roomId, userName }) => {
+    if (!socket.isCreator || !rooms.has(roomId)) {
+      socket.emit('error-message', { message: 'Not authorized to remove users' });
+      return;
+    }
+
+    const room = rooms.get(roomId);
+    let userToRemove = null;
+    let socketToRemove = null;
+
+    // Find the user to remove
+    for (const [socketId, user] of room.users) {
+      if (user.name === userName && !user.isCreator) {
+        userToRemove = user;
+        socketToRemove = socketId;
+        break;
+      }
+    }
+
+    if (userToRemove && socketToRemove) {
+      // Remove the user from room
+      room.users.delete(socketToRemove);
+      
+      // Get the socket instance and make them leave
+      const targetSocket = io.sockets.sockets.get(socketToRemove);
+      if (targetSocket) {
+        targetSocket.leave(roomId);
+        targetSocket.emit('removed-from-room', {
+          message: 'You have been removed from the room',
+          removedBy: socket.userName
+        });
+        
+        // Clean up voice chat if they were in it
+        if (voiceChatParticipants.has(roomId)) {
+          const roomParticipants = voiceChatParticipants.get(roomId);
+          for (const participant of roomParticipants) {
+            if (participant.socketId === socketToRemove) {
+              roomParticipants.delete(participant);
+              break;
+            }
+          }
+          
+          // Notify voice chat participants
+          socket.to(roomId).emit('user-left-voice', {
+            userId: socketToRemove,
+            userName: userName
+          });
+        }
+      }
+
+      // Notify remaining users
+      socket.to(roomId).emit('user-removed', {
+        userName: userName,
+        users: Array.from(room.users.values())
+      });
+
+      console.log(`${userName} was removed from room ${roomId} by ${socket.userName}`);
+    } else {
+      socket.emit('error-message', { message: 'User not found or cannot remove creator' });
     }
   });
 
@@ -440,28 +504,42 @@ io.on('connection', (socket) => {
     console.log(`File shared in room ${roomId} by ${userName}: ${fileName}`);
   });
 
-  // Enhanced disconnect handler
+  // UPDATED: Enhanced disconnect handler with creator transfer
   const handleDisconnect = (reason) => {
     console.log(`User ${socket.id} (${socket.userName}) disconnected. Reason: ${reason || 'unknown'}`);
     
     // Handle regular room cleanup
     if (socket.roomId && rooms.has(socket.roomId)) {
       const room = rooms.get(socket.roomId);
+      const wasCreator = socket.isCreator;
+      
       room.users.delete(socket.id);
 
       if (room.users.size === 0) {
         rooms.delete(socket.roomId);
         console.log(`Room ${socket.roomId} is now empty and has been deleted.`);
       } else {
-        // Check if disconnected user was the creator, promote someone else
-        const wasCreator = socket.isCreator;
-        if (wasCreator) {
-          // Promote the first remaining user to creator
+        // Handle creator transfer if the disconnected user was the creator
+        if (wasCreator && room.users.size > 0) {
+          // Find the user who joined earliest (first in the map) to promote
           const remainingUsers = Array.from(room.users.values());
-          if (remainingUsers.length > 0) {
-            remainingUsers[0].isCreator = true;
-            console.log(`Promoted ${remainingUsers[0].name} to room creator`);
+          const newCreator = remainingUsers[0];
+          newCreator.isCreator = true;
+          
+          // Update the socket instance
+          const newCreatorSocket = io.sockets.sockets.get(newCreator.id);
+          if (newCreatorSocket) {
+            newCreatorSocket.isCreator = true;
           }
+          
+          console.log(`Promoted ${newCreator.name} to room creator in room ${socket.roomId}`);
+          
+          // Notify all users about the new creator
+          io.to(socket.roomId).emit('creator-changed', {
+            newCreator: newCreator.name,
+            message: `${newCreator.name} is now the room creator`,
+            users: remainingUsers
+          });
         }
 
         // Notify others that user left

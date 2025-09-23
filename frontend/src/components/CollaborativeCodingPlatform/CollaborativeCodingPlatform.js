@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
@@ -178,6 +177,7 @@ const Whiteboard = ({ isOpen, onClose, roomId, socketRef, theme }) => {
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentColor, setCurrentColor] = useState('#ffffff');
   const [currentSize, setCurrentSize] = useState(2);
+  const lastPointRef = useRef({ x: 0, y: 0 });
   
   useEffect(() => {
     if (!isOpen || !socketRef.current) return;
@@ -193,11 +193,16 @@ const Whiteboard = ({ isOpen, onClose, roomId, socketRef, theme }) => {
     ctx.fillStyle = theme === 'dark' ? '#1f2937' : '#ffffff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
+    // Configure drawing context
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    
     // Socket listeners for collaborative drawing
     socketRef.current.on('whiteboard-draw', ({ x, y, prevX, prevY, color, size }) => {
       ctx.strokeStyle = color;
       ctx.lineWidth = size;
       ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
       ctx.beginPath();
       ctx.moveTo(prevX, prevY);
       ctx.lineTo(x, y);
@@ -217,53 +222,99 @@ const Whiteboard = ({ isOpen, onClose, roomId, socketRef, theme }) => {
     };
   }, [isOpen, theme, socketRef]);
   
-  const startDrawing = (e) => {
-    setIsDrawing(true);
+  const getCoordinates = (e) => {
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const scaleX = canvasRef.current.width / rect.width;
+    const scaleY = canvasRef.current.height / rect.height;
+    
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY
+    };
+  };
+  
+  const startDrawing = (e) => {
+    e.preventDefault();
+    setIsDrawing(true);
+    
+    const coords = getCoordinates(e);
+    lastPointRef.current = coords;
     
     const ctx = canvasRef.current.getContext('2d');
     ctx.strokeStyle = currentColor;
     ctx.lineWidth = currentSize;
     ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    
+    // Draw a dot for single clicks
     ctx.beginPath();
-    ctx.moveTo(x, y);
+    ctx.arc(coords.x, coords.y, currentSize / 2, 0, Math.PI * 2);
+    ctx.fillStyle = currentColor;
+    ctx.fill();
   };
   
   const draw = (e) => {
     if (!isDrawing) return;
+    e.preventDefault();
     
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
+    const coords = getCoordinates(e);
     const ctx = canvasRef.current.getContext('2d');
-    const prevX = ctx.currentX || x;
-    const prevY = ctx.currentY || y;
     
-    ctx.lineTo(x, y);
+    ctx.strokeStyle = currentColor;
+    ctx.lineWidth = currentSize;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    
+    ctx.beginPath();
+    ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y);
+    ctx.lineTo(coords.x, coords.y);
     ctx.stroke();
     
     // Emit drawing data to other users
     if (socketRef.current) {
       socketRef.current.emit('whiteboard-draw', {
         roomId,
-        x,
-        y,
-        prevX,
-        prevY,
+        x: coords.x,
+        y: coords.y,
+        prevX: lastPointRef.current.x,
+        prevY: lastPointRef.current.y,
         color: currentColor,
         size: currentSize
       });
     }
     
-    ctx.currentX = x;
-    ctx.currentY = y;
+    lastPointRef.current = coords;
   };
   
-  const stopDrawing = () => {
+  const stopDrawing = (e) => {
+    if (!isDrawing) return;
+    e.preventDefault();
     setIsDrawing(false);
+  };
+  
+  // Touch event handlers
+  const handleTouchStart = (e) => {
+    const touch = e.touches[0];
+    const mouseEvent = new MouseEvent("mousedown", {
+      clientX: touch.clientX,
+      clientY: touch.clientY
+    });
+    canvasRef.current.dispatchEvent(mouseEvent);
+  };
+  
+  const handleTouchMove = (e) => {
+    e.preventDefault();
+    const touch = e.touches[0];
+    const mouseEvent = new MouseEvent("mousemove", {
+      clientX: touch.clientX,
+      clientY: touch.clientY
+    });
+    canvasRef.current.dispatchEvent(mouseEvent);
+  };
+  
+  const handleTouchEnd = (e) => {
+    const mouseEvent = new MouseEvent("mouseup", {});
+    canvasRef.current.dispatchEvent(mouseEvent);
   };
   
   const clearCanvas = () => {
@@ -323,6 +374,7 @@ const Whiteboard = ({ isOpen, onClose, roomId, socketRef, theme }) => {
           >
             Clear
           </button>
+          
           <button
             onClick={onClose}
             className={`px-3 py-1 rounded ${theme === 'dark' ? 'bg-gray-600 hover:bg-gray-700' : 'bg-gray-500 hover:bg-gray-600'} text-white transition-colors`}
@@ -331,14 +383,16 @@ const Whiteboard = ({ isOpen, onClose, roomId, socketRef, theme }) => {
           </button>
         </div>
         
-        
         <canvas
           ref={canvasRef}
           onMouseDown={startDrawing}
           onMouseMove={draw}
           onMouseUp={stopDrawing}
           onMouseLeave={stopDrawing}
-          className="border border-gray-300 cursor-crosshair"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          className="border border-gray-300 cursor-crosshair touch-none"
           style={{ maxWidth: '100%', height: 'auto' }}
         />
       </div>
@@ -571,6 +625,7 @@ function CollaborativeCodingPlatform() {
           editorRef.current.setValue(roomCode);
         }
       }
+
       if (roomLanguage !== undefined) setLanguage(roomLanguage);
       if (roomInput !== undefined) setInput(roomInput);
       if (roomUsers) {
@@ -580,6 +635,49 @@ function CollaborativeCodingPlatform() {
           setCurrentUser({ name: currentUserData.name, isCreator: currentUserData.isCreator });
         }
       }
+    });
+
+    socket.on('creator-changed', ({ newCreator, message, users: updatedUsers }) => {
+      console.log('Creator changed:', newCreator);
+      
+      // Update current user if they became the creator
+      if (newCreator === userName) {
+        setCurrentUser(prev => ({ ...prev, isCreator: true }));
+        showAppNotification('You are now the room creator!', 'success');
+      } else {
+        setCurrentUser(prev => ({ ...prev, isCreator: false }));
+        showAppNotification(message, 'info');
+      }
+      
+      // Update users list
+      if (updatedUsers) {
+        setUsers(updatedUsers.map(user => ({
+          ...user,
+          isCurrentUser: user.name === userName
+        })));
+      }
+    });
+
+    socket.on('removed-from-room', ({ message, removedBy }) => {
+      showAppNotification(`${message} by ${removedBy}`, 'error');
+      setTimeout(() => {
+        navigate('/');
+      }, 3000);
+    });
+
+    socket.on('user-removed', ({ userName: removedUserName, users: updatedUsers }) => {
+      console.log('User removed:', removedUserName);
+      if (updatedUsers) {
+        setUsers(updatedUsers.map(user => ({
+          ...user,
+          isCurrentUser: user.name === userName
+        })));
+      }
+      showAppNotification(`${removedUserName} was removed from the room`, 'warning');
+    });
+
+    socket.on('error-message', ({ message }) => {
+      showAppNotification(message, 'error');
     });
 
     socket.on('user-joined', ({ user, users: updatedUsers }) => {
@@ -596,14 +694,6 @@ function CollaborativeCodingPlatform() {
         setUsers(updatedUsers);
       }
       showAppNotification(`${leftUserName} left the room`);
-    });
-
-    socket.on('user-removed', ({ userName: removedUserName, users: updatedUsers }) => {
-      console.log('User removed:', removedUserName);
-      if (updatedUsers) {
-        setUsers(updatedUsers);
-      }
-      showAppNotification(`${removedUserName} was removed from the room`, 'error');
     });
 
     socket.on('code-update', ({ code: newCode }) => {
@@ -650,7 +740,7 @@ function CollaborativeCodingPlatform() {
         await webRTCRef.current.handleIceCandidate(candidate, from);
       }
     });
-  }, [navigate, showAppNotification, isEditorReady]);
+  }, [navigate, showAppNotification, isEditorReady, userName]);
 
   const initializeRoom = useCallback(async () => {
     if (hasJoinedRef.current) return;
@@ -963,7 +1053,7 @@ function CollaborativeCodingPlatform() {
 
   // Remove user (creator only)
   const removeUser = (userToRemove) => {
-    if (!currentUser?.isCreator) return;
+    if (!currentUser?.isCreator || userToRemove === userName) return;
     
     if (socketRef.current) {
       socketRef.current.emit('remove-user', {
@@ -1037,28 +1127,45 @@ function CollaborativeCodingPlatform() {
         <div className={`${theme === 'dark' ? 'bg-gray-800' : 'bg-white'} rounded-lg p-4 max-w-md w-full mx-4`}>
           <div className="flex justify-between items-center mb-4">
             <h3 className={`text-lg font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
-              Manage Users
+              Manage Users (Creator: {currentUser?.name})
             </h3>
-            
+            <button
+              onClick={onClose}
+              className={`p-2 rounded hover:${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-200'} transition-colors`}
+            >
+              <XIcon size={20} />
+            </button>
           </div>
           
           <div className="space-y-2">
             {users.map((user, index) => (
               <div
-                key={index}
+                key={`${user.name}-${index}`}
                 className={`flex items-center justify-between p-2 rounded ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-100'}`}
               >
-                <div>
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-3 h-3 rounded-full"
+                    style={{ backgroundColor: user.color }}
+                  />
                   <span className={`${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
                     {user.name}
                   </span>
-                  {user.isCreator && <span className="text-yellow-500 ml-1">👑</span>}
-                  {user.isCurrentUser && <span className={`text-blue-500 ml-1 text-sm ${theme === 'dark' ? 'text-blue-400' : 'text-blue-600'}`}>(You)</span>}
+                  {user.isCreator && <span className="text-yellow-500" title="Room Creator">👑</span>}
+                  {user.isCurrentUser && (
+                    <span className={`text-blue-500 ml-1 text-sm ${theme === 'dark' ? 'text-blue-400' : 'text-blue-600'}`}>
+                      (You)
+                    </span>
+                  )}
                 </div>
                 
                 {!user.isCreator && !user.isCurrentUser && (
                   <button
-                    onClick={() => removeUser(user.name)}
+                    onClick={() => {
+                      if (window.confirm(`Remove ${user.name} from the room?`)) {
+                        removeUser(user.name);
+                      }
+                    }}
                     className="p-1 rounded bg-red-600 text-white hover:bg-red-700 transition-colors"
                     title={`Remove ${user.name}`}
                   >
@@ -1067,6 +1174,12 @@ function CollaborativeCodingPlatform() {
                 )}
               </div>
             ))}
+          </div>
+          
+          <div className={`mt-4 p-2 rounded ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-100'}`}>
+            <p className={`text-xs ${theme === 'dark' ? 'text-gray-300' : 'text-gray-600'}`}>
+              💡 As the creator, you can remove other users from the room. If you leave, the next user will become the creator.
+            </p>
           </div>
         </div>
       </div>
@@ -1163,7 +1276,8 @@ function CollaborativeCodingPlatform() {
                   <button
                     onClick={toggleMic}
                     className={`p-2 rounded transition-colors ${micMuted 
-                      ? 'bg-red-500 text-white hover:bg-red-600' 
+                      ? 'bg-red-500 text-white hover:bg-red-600'
+ 
                       : 'bg-green-500 text-white hover:bg-green-600'
                     }`}
                     title={micMuted ? 'Unmute' : 'Mute'}
