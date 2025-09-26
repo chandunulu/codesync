@@ -214,6 +214,7 @@ const Whiteboard = ({ isOpen, onClose, roomId, socketRef, theme }) => {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     });
     
+    
     return () => {
       if (socketRef.current) {
         socketRef.current.off('whiteboard-draw');
@@ -575,6 +576,25 @@ function CollaborativeCodingPlatform() {
       setNotification({ show: false, message: '', type: 'success' });
     }, 3000);
   }, []);
+  
+  // ➡️ CORRECTED: This useEffect will now properly manage remote video refs
+  useEffect(() => {
+    remoteUsers.forEach((userData, peerId) => {
+      if (remoteVideosRef.current[peerId] && userData.stream) {
+        remoteVideosRef.current[peerId].srcObject = userData.stream;
+      }
+    });
+
+    // Clean up video refs when users leave
+    return () => {
+      Object.keys(remoteVideosRef.current).forEach(peerId => {
+        if (!remoteUsers.has(peerId) && remoteVideosRef.current[peerId]) {
+          remoteVideosRef.current[peerId].srcObject = null;
+          delete remoteVideosRef.current[peerId];
+        }
+      });
+    };
+  }, [remoteUsers]);
 
   // Initialize default code when language changes
   useEffect(() => {
@@ -1089,35 +1109,6 @@ function CollaborativeCodingPlatform() {
     navigate('/');
   };
 
-  const RemoteVideoComponent = ({ peerId, userData, videoEnabled }) => {
-    const videoRef = useRef(null);
-    
-    useEffect(() => {
-      if (videoRef.current && userData.stream) {
-        videoRef.current.srcObject = userData.stream;
-      }
-      return () => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = null;
-        }
-      };
-    }, [userData.stream]);
-    
-    return (
-      <div className="mb-2 relative">
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          className={`w-full rounded ${videoEnabled ? 'h-20' : 'h-12'} ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-300'}`}
-        />
-        <div className="absolute bottom-1 left-1 bg-black bg-opacity-50 text-white text-xs px-1 rounded">
-          {userData.name}
-        </div>
-      </div>
-    );
-  };
-
   // User Management Component
   const UserManagement = ({ isOpen, onClose }) => {
     if (!isOpen || !currentUser?.isCreator) return null;
@@ -1277,7 +1268,6 @@ function CollaborativeCodingPlatform() {
                     onClick={toggleMic}
                     className={`p-2 rounded transition-colors ${micMuted 
                       ? 'bg-red-500 text-white hover:bg-red-600'
- 
                       : 'bg-green-500 text-white hover:bg-green-600'
                     }`}
                     title={micMuted ? 'Unmute' : 'Mute'}
@@ -1512,22 +1502,28 @@ function CollaborativeCodingPlatform() {
                     autoPlay
                     muted
                     playsInline
-                    className={`w-full rounded ${videoEnabled ? 'h-20' : 'h-12'} ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-300'}`}
+                    className={`w-full rounded ${videoEnabled ? 'h-32' : 'h-16'} ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-300'}`}
                   />
                   <div className="absolute bottom-1 left-1 bg-black bg-opacity-50 text-white text-xs px-1 rounded">
                     You {micMuted && '🔇'}
                   </div>
                 </div>
 
-                {/* Remote Videos */}
+                {/* Remote Videos - CORRECTED to only use the direct render method */}
                 {Array.from(remoteUsers.entries()).map(([peerId, userData]) => (
-                  <RemoteVideoComponent 
-                    key={peerId}
-                    peerId={peerId}
-                    userData={userData}
-                    videoEnabled={videoEnabled}
-                  />
+                  <div key={peerId} className="mb-2 relative">
+                    <video
+                      ref={el => { remoteVideosRef.current[peerId] = el; }}
+                      autoPlay
+                      playsInline
+                      className={`w-full rounded ${videoEnabled ? 'h-20' : 'h-12'} ${theme === 'dark' ? 'bg-gray-700' : 'bg-gray-300'}`}
+                    />
+                    <div className="absolute bottom-1 left-1 bg-black bg-opacity-50 text-white text-xs px-1 rounded">
+                      {userData.name}
+                    </div>
+                  </div>
                 ))}
+                
                 {remoteUsers.size === 0 && (
                   <div className={`text-xs text-center py-2 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
                     Waiting for others to join voice chat...

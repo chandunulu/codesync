@@ -1,8 +1,10 @@
 {
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "axios": "^1.12.2",
     "cors": "^2.8.5",
     "monaco-editor": "^0.53.0",
-    "mongoose": "^8.18.1"
+    "mongoose": "^8.18.1",
+    "socket.io-client": "^4.8.1"
   }
 }

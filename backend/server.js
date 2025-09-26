@@ -49,7 +49,7 @@ app.use('/api/rooms', roomRoutes);
 // Code execution endpoint
 app.post('/api/execute', async (req, res) => {
   const { source_code, language_id, stdin } = req.body;
-   
+    
   if (!source_code || !language_id) {
     return res.status(400).json({
       success: false,
@@ -174,6 +174,8 @@ const rooms = new Map();
 
 // Track voice chat participants per room
 const voiceChatParticipants = new Map(); // roomId -> Set of {socketId, userName}
+const connectionTimeouts = new Map(); // Track connection timeouts
+const MAX_RECONNECTION_TIME = 30000; // 30 seconds
 
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
@@ -318,6 +320,12 @@ io.on('connection', (socket) => {
   socket.on('join-voice-chat', ({ roomId, userName }) => {
     console.log(`${userName} (${socket.id}) joined voice chat in room ${roomId}`);
     
+    // Clear any existing timeout for this socket
+    if (connectionTimeouts.has(socket.id)) {
+      clearTimeout(connectionTimeouts.get(socket.id));
+      connectionTimeouts.delete(socket.id);
+    }
+
     // Initialize room voice participants if not exists
     if (!voiceChatParticipants.has(roomId)) {
       voiceChatParticipants.set(roomId, new Set());
@@ -325,6 +333,14 @@ io.on('connection', (socket) => {
     
     const roomParticipants = voiceChatParticipants.get(roomId);
     
+    // Remove any existing entry for this socket (in case of reconnection)
+    for (const participant of roomParticipants) {
+      if (participant.socketId === socket.id) {
+        roomParticipants.delete(participant);
+        break;
+      }
+    }
+
     // Get existing participants (exclude the joining user)
     const existingParticipants = Array.from(roomParticipants)
       .filter(p => p.socketId !== socket.id)
@@ -379,6 +395,17 @@ io.on('connection', (socket) => {
   // WebRTC Signaling Handlers
   socket.on('webrtc-offer', ({ roomId, offer, to, fromUser }) => {
     console.log(`WebRTC offer from ${fromUser} (${socket.id}) to ${to} in room ${roomId}`);
+
+    // Validate offer data
+    if (!offer || typeof offer !== 'object') {
+      console.error('Invalid offer data received');
+      socket.emit('webrtc-error', {
+        type: 'invalid-offer',
+        message: 'Invalid offer data received',
+        targetId: to
+      });
+      return;
+    }
     
     // Validate that the target socket is in the same room
     const targetSocket = io.sockets.sockets.get(to);
@@ -403,6 +430,17 @@ io.on('connection', (socket) => {
 
   socket.on('webrtc-answer', ({ roomId, answer, to }) => {
     console.log(`WebRTC answer from ${socket.id} to ${to} in room ${roomId}`);
+
+    // Validate answer data
+    if (!answer || typeof answer !== 'object') {
+      console.error('Invalid answer data received');
+      socket.emit('webrtc-error', {
+        type: 'invalid-answer',
+        message: 'Invalid answer data received',
+        targetId: to
+      });
+      return;
+    }
     
     // Validate that the target socket is in the same room
     const targetSocket = io.sockets.sockets.get(to);
@@ -424,6 +462,12 @@ io.on('connection', (socket) => {
   });
 
   socket.on('webrtc-ice-candidate', ({ roomId, candidate, to }) => {
+    // Validate candidate data
+    if (!candidate || typeof candidate !== 'object') {
+      console.error('Invalid ICE candidate data received');
+      return; // ICE candidates can fail silently
+    }
+    
     console.log(`ICE candidate from ${socket.id} to ${to} in room ${roomId}`);
     
     // Validate that the target socket is in the same room
@@ -438,6 +482,36 @@ io.on('connection', (socket) => {
     } else {
       console.error(`Target socket ${to} not found or not in room ${roomId}`);
       // ICE candidates can fail silently as they're sent frequently
+    }
+  });
+
+  // Add connection quality monitoring
+  socket.on('webrtc-connection-state', ({ roomId, targetId, state }) => {
+    console.log(`WebRTC connection state from ${socket.id} to ${targetId}: ${state}`);
+
+    if (state === 'failed' || state === 'disconnected') {
+      // Notify both peers about the connection failure
+      socket.to(targetId).emit('webrtc-connection-failed', {
+        from: socket.id,
+        state: state
+      });
+
+      // Set a timeout for reconnection attempts
+      const timeoutId = setTimeout(() => {
+        console.log(`Connection timeout reached for ${socket.id} -> ${targetId}`);
+        // Clean up the connection on both ends
+        socket.emit('webrtc-cleanup-peer', { peerId: targetId });
+        socket.to(targetId).emit('webrtc-cleanup-peer', { peerId: socket.id });
+      }, MAX_RECONNECTION_TIME);
+
+      connectionTimeouts.set(`${socket.id}-${targetId}`, timeoutId);
+    } else if (state === 'connected') {
+      // Clear any existing timeout for successful connection
+      const timeoutKey = `${socket.id}-${targetId}`;
+      if (connectionTimeouts.has(timeoutKey)) {
+        clearTimeout(connectionTimeouts.get(timeoutKey));
+        connectionTimeouts.delete(timeoutKey);
+      }
     }
   });
 
@@ -507,6 +581,14 @@ io.on('connection', (socket) => {
   // UPDATED: Enhanced disconnect handler with creator transfer
   const handleDisconnect = (reason) => {
     console.log(`User ${socket.id} (${socket.userName}) disconnected. Reason: ${reason || 'unknown'}`);
+
+    // Clear any connection timeouts for this socket
+    connectionTimeouts.forEach((timeout, key) => {
+      if (key.includes(socket.id)) {
+        clearTimeout(timeout);
+        connectionTimeouts.delete(key);
+      }
+    });
     
     // Handle regular room cleanup
     if (socket.roomId && rooms.has(socket.roomId)) {
@@ -578,6 +660,12 @@ io.on('connection', (socket) => {
   socket.on('leave-room', () => handleDisconnect('leave-room'));
 
   // Handle connection errors
+  if (socket.roomId) {
+    socket.to(socket.roomId).emit('user-left-voice', {
+      userId: socket.id,
+      userName: socket.userName || 'Unknown User'
+    });
+  }
   socket.on('error', (error) => {
     console.error(`Socket error for ${socket.id}:`, error);
   });
